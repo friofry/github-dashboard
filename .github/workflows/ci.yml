@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Core tests
+        run: swift test --package-path Core
+      - name: Build macOS app
+        run: >
+          xcodebuild -quiet -project GitHubDashboard.xcodeproj -scheme GitHubDashboard
+          -destination 'platform=macOS' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
+      - name: Build iOS app
+        run: >
+          xcodebuild -quiet -project GitHubDashboard.xcodeproj -scheme GitHubDashboard
+          -destination 'generic/platform=iOS Simulator' -derivedDataPath build CODE_SIGNING_ALLOWED=NO build
