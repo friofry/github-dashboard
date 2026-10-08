@@ -17,6 +17,10 @@ APP="$DERIVED/Build/Products/Release/$APP_NAME"
 
 # Only one copy may run, so stop the previous build before opening the new one.
 osascript -e "tell application id \"$(bundle_id "$APP/Contents/Info.plist")\" to quit" >/dev/null 2>&1 || true
+for _ in {1..50}; do
+    pgrep -qx "${APP_NAME%.app}" || break
+    sleep 0.1
+done
 
 if [[ "${1:-}" == "--install" ]]; then
     TARGET="/Applications/$APP_NAME"
