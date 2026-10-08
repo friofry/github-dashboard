@@ -16,6 +16,8 @@ public protocol ReviewPreferences: AnyObject {
     var reviewLanguage: String { get set }
     /// Review requests that already existed when auto-review was switched on; nil until the next sync records them.
     var reviewBaseline: [String]? { get set }
+    /// PR id -> when the user marked it done.
+    var reviewDone: [String: Date] { get set }
 }
 
 /// Runs Claude reviews one at a time, keeps their results, and decides which ones start by themselves.
@@ -50,6 +52,7 @@ public final class ReviewCoordinator {
     public var dailyAutoBudget: Double { didSet { preferences.dailyAutoBudget = dailyAutoBudget } }
     public var language: String { didSet { preferences.reviewLanguage = language } }
 
+    private var done: [String: Date] { didSet { preferences.reviewDone = done } }
     private var working: [String: Phase] = [:]
     private var failures: [String: String] = [:]
     /// "id@sha" of automatic attempts, so a failing review is not retried on every refresh.
@@ -84,6 +87,8 @@ public final class ReviewCoordinator {
         maxRunBudget = preferences.maxRunBudget
         dailyAutoBudget = preferences.dailyAutoBudget
         language = preferences.reviewLanguage
+        let cutoff = now().addingTimeInterval(-DashboardStore.seenRetention)
+        done = preferences.reviewDone.filter { $0.value > cutoff }
     }
 
     // MARK: State
@@ -96,9 +101,20 @@ public final class ReviewCoordinator {
         return reviewed == pullRequest.headRefOid ? .current : .outdated
     }
 
+    /// Done means the user is finished with it; any later activity in the pull request brings it back.
+    public func isDone(_ pullRequest: PullRequest) -> Bool {
+        guard let date = done[pullRequest.id] else { return false }
+        return pullRequest.updatedAt <= date
+    }
+
+    public func setDone(_ pullRequest: PullRequest, _ isDone: Bool) {
+        done[pullRequest.id] = isDone ? now() : nil
+    }
+
     /// Review requests that have no review of their current commit and are not being worked on.
     public var pending: [PullRequest] {
         reviewRequests.filter {
+            guard !isDone($0) else { return false }
             switch status(for: $0) {
             case .none, .outdated, .failed: return true
             case .working, .current: return false

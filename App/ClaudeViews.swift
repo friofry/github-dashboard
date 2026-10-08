@@ -7,9 +7,14 @@ struct ClaudeReviewsView: View {
     @Environment(DashboardStore.self) private var store
     let coordinator: ReviewCoordinator
     let dashboard: Dashboard
+    @State private var showsDone = false
 
     var body: some View {
+        let doneCount = (dashboard.reviews + dashboard.mine).filter(coordinator.isDone).count
         List {
+            if doneCount > 0 {
+                Toggle("Show \(doneCount) done", isOn: $showsDone)
+            }
             if !coordinator.pending.isEmpty {
                 HStack {
                     Text("\(coordinator.pending.count) review requests have no review of their latest commit.")
@@ -24,9 +29,10 @@ struct ClaudeReviewsView: View {
     }
 
     @ViewBuilder private func section(_ title: String, _ pullRequests: [PullRequest]) -> some View {
-        if !pullRequests.isEmpty {
+        let visible = pullRequests.filter { showsDone || !coordinator.isDone($0) }
+        if !visible.isEmpty {
             Section(title) {
-                ForEach(store.sorted(pullRequests)) { pullRequest in
+                ForEach(store.sorted(visible)) { pullRequest in
                     ReviewRow(coordinator: coordinator, pullRequest: pullRequest)
                 }
             }
@@ -48,7 +54,15 @@ struct ReviewRow: View {
                 ForEach(review.sortedFindings) { finding in
                     FindingCard(finding: finding, link: coordinator.link(for: finding, in: pullRequest))
                 }
+            } else {
+                Text("Not reviewed yet.").font(.callout).foregroundStyle(.secondary)
             }
+            HStack {
+                Button("Open pull request", systemImage: "arrow.up.right.square") { openURL(pullRequest.url) }
+                Spacer()
+                doneButton
+            }
+            .padding(.vertical, 4)
         } label: {
             HStack(spacing: 8) {
                 VStack(alignment: .leading, spacing: 2) {
@@ -64,7 +78,26 @@ struct ReviewRow: View {
                         .labelStyle(.iconOnly).help("Open the lesson for this pull request")
                 }
                 action
+                doneButton.labelStyle(.iconOnly)
             }
+            // The whole row opens and closes the findings, not just the small arrow.
+            .contentShape(Rectangle())
+            .onTapGesture { withAnimation { isExpanded.toggle() } }
+            .opacity(coordinator.isDone(pullRequest) ? 0.55 : 1)
+        }
+    }
+
+    @ViewBuilder private var doneButton: some View {
+        if coordinator.isDone(pullRequest) {
+            Button("Mark as not done", systemImage: "arrow.uturn.backward.circle") {
+                coordinator.setDone(pullRequest, false)
+            }
+            .help("Bring this pull request back")
+        } else {
+            Button("Mark as done", systemImage: "checkmark.circle") {
+                withAnimation { coordinator.setDone(pullRequest, true) }
+            }
+            .help("Hide until there is new activity in this pull request")
         }
     }
 

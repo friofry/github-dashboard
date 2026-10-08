@@ -53,6 +53,8 @@ for you. Open **Claude reviews**, press **Review**, and each finding shows:
 - what is wrong, a failing example and a fix, in plain words
 - a comment ready to copy and post
 
+Click a pull request to open its findings. **Mark as done** hides it until there is new activity in it.
+
 Nothing is posted to GitHub for you. In Settings you can also:
 
 - **Review new requests automatically** - requests that arrive after you switch it on, and new commits in

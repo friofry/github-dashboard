@@ -320,6 +320,28 @@ final class ReviewCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.status(for: updated.reviews[0]), .current)
     }
 
+    func testDonePullRequestComesBackOnlyOnNewActivity() throws {
+        let coordinator = makeCoordinator()
+        let dashboard = try decodeDashboard()
+        let request = dashboard.reviews[0]
+        coordinator.sync(with: dashboard)
+        XCTAssertEqual(coordinator.pending.map(\.id), ["PR_2"])
+
+        // fixtureNow is after the pull request's last update.
+        coordinator.setDone(request, true)
+        XCTAssertTrue(coordinator.isDone(request))
+        XCTAssertTrue(coordinator.pending.isEmpty)
+        XCTAssertEqual(preferences.reviewDone["PR_2"], fixtureNow)
+
+        // Marked done before the latest activity: it is back.
+        preferences.reviewDone = ["PR_2": request.updatedAt.addingTimeInterval(-60)]
+        XCTAssertFalse(makeCoordinator().isDone(request))
+
+        coordinator.setDone(request, false)
+        XCTAssertFalse(coordinator.isDone(request))
+        XCTAssertNil(preferences.reviewDone["PR_2"])
+    }
+
     func testAutomaticRunsStopAtTheDailyBudgetButManualOnesDoNot() async throws {
         var spent = ClaudeUsage()
         spent.costUSD = 12
