@@ -43,6 +43,35 @@ Everything is optional. Copy `.env.example` to `.env` and edit:
 `.env` is git-ignored. It only sets the defaults: in Settings you can tick your personal account and each
 organization, or add another one by name.
 
+## Claude reviews (macOS)
+
+With [Claude Code](https://claude.com/claude-code) installed and signed in, the app can review pull requests
+for you. Open **Claude reviews**, press **Review**, and each finding shows:
+
+- a severity (high, medium, low) and a category: regression, security, reliability, modularity, structure, smell
+- a link to the exact line on github.com
+- what is wrong, a failing example and a fix, in plain words
+- a comment ready to copy and post
+
+Nothing is posted to GitHub for you. In Settings you can also:
+
+- **Review new requests automatically** - requests that arrive after you switch it on, and new commits in
+  pull requests already reviewed. A daily spending limit keeps a burst of requests from running away.
+- **Write a lesson for each review** - a short HTML lesson in `~/learn/<repo>/pr-<number>/` with a diagram of
+  the change, where it sits in the code and what was found. Needs the `teach` skill in Claude Code.
+
+**Claude usage** lists every run with its tokens and cost.
+
+The review follows one fixed form, defined by the [pr-review skill](skills/pr-review/SKILL.md). To use the
+same skill in your own Claude Code sessions (`/pr-review owner/repo#123`):
+
+```bash
+./scripts/install_skill.sh
+```
+
+Pull request text is untrusted, so the review runs with no tools at all: Claude receives the diff and returns
+the form, and the app builds every link itself.
+
 ## How it counts
 
 - **New** means activity by someone else since you last opened that pull request. Before the first open,
@@ -54,11 +83,13 @@ organization, or add another one by name.
 
 ```bash
 swift test --package-path Core   # logic tests, no network
+LIVE_CLAUDE=1 swift test --package-path Core --filter Live   # one real Claude run, spends tokens
 xcodegen                         # regenerate the Xcode project after editing project.yml
 ```
 
 | Path | What lives there |
 |---|---|
-| `Core/` | Swift package: GitHub API, tokens, statistics, app state. No UI. |
+| `Core/` | Swift package: GitHub API, tokens, statistics, reviews, app state. No UI. |
+| `skills/pr-review/` | The review form: instructions, JSON schema, example, lesson brief. |
 | `App/` | SwiftUI views for macOS and iOS. |
 | `project.yml` | Source of the Xcode project. |

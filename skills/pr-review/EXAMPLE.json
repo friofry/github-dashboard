@@ -1,0 +1,28 @@
+{
+  "summary": "Adds paging to the user list. The paging maths is right for full pages but crashes on an empty table.",
+  "verdict": "request_changes",
+  "findings": [
+    {
+      "category": "reliability",
+      "severity": "high",
+      "title": "Empty list crashes the pager",
+      "path": "api/users.go",
+      "line": 42,
+      "problem": "`page - 1` is negative when the list is empty, so `items[page - 1]` panics.",
+      "example": "GET /users?page=0 on an empty table returns 500.",
+      "suggestion": "Return early when there are no items.",
+      "comment": "`page - 1` is negative when the list is empty, so `items[page - 1]` panics.\n\nExample: `GET /users?page=0` on an empty table.\n\n```suggestion\nif len(items) == 0 { return nil }\n```"
+    },
+    {
+      "category": "smell",
+      "severity": "low",
+      "title": "Page size 50 is repeated in two places",
+      "path": "api/users.go",
+      "line": 17,
+      "endLine": 18,
+      "problem": "The handler and the query both hard-code 50, so changing one silently breaks the other.",
+      "suggestion": "Move it to one `const pageSize = 50`.",
+      "comment": "50 is hard-coded here and in the query below; they have to stay equal. A shared `const pageSize = 50` would keep them in step."
+    }
+  ]
+}

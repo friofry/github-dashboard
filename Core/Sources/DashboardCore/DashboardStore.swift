@@ -28,6 +28,8 @@ public final class DashboardStore {
     private let now: () -> Date
     private var refreshLoop: Task<Void, Never>?
     private var refreshQueued = false
+    /// Called after each successful load of the lists, e.g. to start reviews.
+    public var onLoaded: ((Dashboard) -> Void)?
     private var loadedScope: [String]?
 
     public init(service: DashboardService, preferences: PreferencesStore, tokenStore: TokenStore? = nil,
@@ -76,6 +78,7 @@ public final class DashboardStore {
             if scope != loadedScope { stats = nil }
             dashboard = try await service.fetchPullRequests(orgs: scope, now: now())
             loadedScope = scope
+            if let dashboard { onLoaded?(dashboard) }
             lastRefresh = now()
             errorMessage = nil
             needsToken = false
@@ -184,6 +187,9 @@ public final class DashboardStore {
     private var allPullRequests: [PullRequest] { (dashboard?.mine ?? []) + (dashboard?.reviews ?? []) }
 
     static func list(_ text: String) -> [String] {
-        text.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+        // People paste "acme/" or "@acme"; only the name itself is a valid owner.
+        text.split(whereSeparator: { $0 == "," || $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/@")) }
+            .filter { !$0.isEmpty }
     }
 }

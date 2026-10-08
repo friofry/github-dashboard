@@ -11,7 +11,12 @@ targets:
   GitHubDashboard:
     type: application
     supportedDestinations: [iOS, macOS]
-    sources: [App]
+    sources:
+      - App
+      # The pr-review skill ships inside the app so reviews always use the matching version.
+      - path: skills
+        type: folder
+        buildPhase: resources
     dependencies:
       - package: DashboardCore
         product: DashboardCore

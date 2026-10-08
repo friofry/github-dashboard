@@ -1,0 +1,30 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "verdict", "findings"],
+  "properties": {
+    "summary": { "type": "string", "description": "What the pull request does and the overall judgement, in one or two sentences." },
+    "verdict": { "type": "string", "enum": ["approve", "comment", "request_changes"] },
+    "findings": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["category", "severity", "title", "path", "line", "problem", "suggestion", "comment"],
+        "properties": {
+          "category": { "type": "string", "enum": ["regression", "security", "reliability", "modularity", "structure", "smell"] },
+          "severity": { "type": "string", "enum": ["high", "medium", "low"] },
+          "title": { "type": "string" },
+          "path": { "type": "string", "description": "File path as it appears in the diff." },
+          "line": { "type": "integer", "minimum": 1, "description": "Line in the new version of the file." },
+          "endLine": { "type": "integer", "minimum": 1 },
+          "problem": { "type": "string" },
+          "example": { "type": "string" },
+          "suggestion": { "type": "string" },
+          "comment": { "type": "string", "description": "Ready to post on GitHub, in English." }
+        }
+      }
+    }
+  }
+}

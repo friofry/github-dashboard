@@ -71,7 +71,7 @@ let listsJSON = """
       "issueCount": 1,
       "nodes": [{
         "id": "PR_1", "number": 7, "title": "Add cache", "url": "https://github.com/acme/api/pull/7",
-        "isDraft": false, "updatedAt": "2026-10-08T10:00:00Z", "additions": 120, "deletions": 4,
+        "isDraft": false, "updatedAt": "2026-10-08T10:00:00Z", "headRefOid": "sha-1", "additions": 120, "deletions": 4,
         "reviewDecision": "CHANGES_REQUESTED",
         "repository": { "nameWithOwner": "acme/api" },
         "author": { "__typename": "User", "login": "me" },
@@ -95,7 +95,7 @@ let listsJSON = """
       "issueCount": 1,
       "nodes": [{
         "id": "PR_2", "number": 9, "title": "Fix login", "url": "https://evil.example/acme/web/pull/9",
-        "isDraft": true, "updatedAt": "2026-10-06T10:00:00Z", "additions": 5, "deletions": 5,
+        "isDraft": true, "updatedAt": "2026-10-06T10:00:00Z", "headRefOid": "sha-2", "additions": 5, "deletions": 5,
         "reviewDecision": null,
         "repository": { "nameWithOwner": "acme/web" },
         "author": { "__typename": "User", "login": "alice" },

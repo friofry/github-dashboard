@@ -35,7 +35,7 @@ public protocol DashboardService: Sendable {
 
 /// Talks to the GitHub GraphQL API. Lists and weekly stats are separate requests:
 /// asked for together they exceed GitHub's 10 second budget on busy accounts.
-public struct GitHubService: DashboardService {
+public struct GitHubService: DashboardService, PullRequestDiffSource {
     private static let endpoint = URL(string: "https://api.github.com/graphql")!
     static let statsPageSize = 50
     static let statsMaxPages = 6
@@ -100,6 +100,23 @@ public struct GitHubService: DashboardService {
         var stats = CodeStats(pullRequests: pullRequests, viewer: viewer, weekStart: weekStart, calendar: calendar)
         stats.isPartial = hasMore
         return stats
+    }
+
+    public func fetchDiff(repo: String, number: Int) async throws -> String {
+        let token = try await requireToken()
+        guard let path = repo.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "https://api.github.com/repos/\(path)/pulls/\(number)")
+        else { throw DashboardError.http(400) }
+        var request = URLRequest(url: url, timeoutInterval: 60)
+        request.setValue("bearer \(token.value)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github.diff", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await transport.send(request)
+        if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+            // 406: GitHub refuses to render diffs past its size limit.
+            throw status == 401 ? DashboardError.unauthorized : DashboardError.http(status)
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func requireToken() async throws -> Token {
@@ -179,7 +196,7 @@ extension GitHubService {
       reviews: search(query: $reviews, type: ISSUE, first: 50) { issueCount nodes { ...PR } }
     }
     fragment PR on PullRequest {
-      id number title url isDraft updatedAt additions deletions reviewDecision
+      id number title url isDraft updatedAt headRefOid additions deletions reviewDecision
       repository { nameWithOwner }
       author { __typename login }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }

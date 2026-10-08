@@ -188,7 +188,7 @@ final class DashboardStoreTests: XCTestCase {
     }
 
     func testScopeCheckboxesListViewerOrganizationsAndCustomOwners() async {
-        preferences.orgs = "initech"
+        preferences.orgs = "initech/, @"
         let store = makeStore()
         XCTAssertEqual(store.availableOwners, ["initech"], "before the first load only saved owners are known")
 
