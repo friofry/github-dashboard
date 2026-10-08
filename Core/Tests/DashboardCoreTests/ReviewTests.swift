@@ -131,6 +131,86 @@ final class ReviewFormTests: XCTestCase {
     }
 }
 
+final class CommentPublishingTests: XCTestCase {
+    private let transport = FakeTransport()
+
+    private func finding(anchored: Bool, endLine: Int? = nil) throws -> Finding {
+        let json = """
+        {"category":"smell","severity":"low","title":"t","path":"api/users.go","line":17,
+         "problem":"p","suggestion":"s","comment":"Please fix."\(endLine.map { ",\"endLine\":\($0)" } ?? "")}
+        """
+        var finding = try JSONDecoder().decode(Finding.self, from: Data(json.utf8))
+        finding.anchored = anchored
+        return finding
+    }
+
+    private func body(_ index: Int) -> [String: Any] {
+        (try? JSONSerialization.jsonObject(with: transport.requests[index].httpBody ?? Data())) as? [String: Any] ?? [:]
+    }
+
+    private var service: GitHubService {
+        GitHubService(tokens: StaticTokenProvider("t0ken"), transport: transport, calendar: utcCalendar)
+    }
+
+    func testPostsOnTheLineOfTheReviewedCommit() async throws {
+        transport.statuses = [201]
+        transport.listsBody = #"{"html_url":"https://github.com/acme/api/pull/7#discussion_r9"}"#
+
+        let url = try await service.publish(try finding(anchored: true), repo: "acme/api", number: 7, commitSha: "abc")
+
+        XCTAssertEqual(url.absoluteString, "https://github.com/acme/api/pull/7#discussion_r9")
+        let request = try XCTUnwrap(transport.requests.first)
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.url?.absoluteString, "https://api.github.com/repos/acme/api/pulls/7/comments")
+        XCTAssertEqual(body(0)["commit_id"] as? String, "abc")
+        XCTAssertEqual(body(0)["line"] as? Int, 17)
+        XCTAssertEqual(body(0)["side"] as? String, "RIGHT")
+        XCTAssertEqual(body(0)["body"] as? String, "Please fix.")
+    }
+
+    func testFallsBackFromRangeToLineToPlainComment() async throws {
+        transport.statuses = [422, 422, 201]
+        transport.listsBody = #"{"html_url":"https://github.com/acme/api/pull/7#issuecomment-1"}"#
+
+        _ = try await service.publish(try finding(anchored: true, endLine: 19), repo: "acme/api", number: 7, commitSha: "abc")
+
+        XCTAssertEqual(body(0)["start_line"] as? Int, 17)
+        XCTAssertEqual(body(0)["line"] as? Int, 19)
+        XCTAssertNil(body(1)["start_line"])
+        XCTAssertEqual(transport.requests[2].url?.path, "/repos/acme/api/issues/7/comments")
+        XCTAssertEqual(body(2)["body"] as? String, "`api/users.go:17`\n\nPlease fix.")
+    }
+
+    func testLineOutsideTheDiffGoesStraightToAPlainComment() async throws {
+        transport.statuses = [201]
+        transport.listsBody = #"{"html_url":"https://github.com/acme/api/pull/7#issuecomment-1"}"#
+
+        _ = try await service.publish(try finding(anchored: false), repo: "acme/api", number: 7, commitSha: "abc")
+
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests[0].url?.path, "/repos/acme/api/issues/7/comments")
+    }
+
+    func testReadOnlyTokenAndForeignLinkAreRefused() async throws {
+        transport.statuses = [403]
+        do {
+            _ = try await service.publish(try finding(anchored: true), repo: "acme/api", number: 7, commitSha: "abc")
+            XCTFail("expected cannotWrite")
+        } catch {
+            XCTAssertEqual(error as? DashboardError, .cannotWrite)
+        }
+
+        transport.statuses = [201]
+        transport.listsBody = #"{"html_url":"https://evil.example/x"}"#
+        do {
+            _ = try await service.publish(try finding(anchored: true), repo: "acme/api", number: 7, commitSha: "abc")
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertNotNil(error as? DashboardError)
+        }
+    }
+}
+
 final class ClaudeResultTests: XCTestCase {
     private let output = """
     {"type":"result","subtype":"success","is_error":false,"duration_ms":11751,"total_cost_usd":0.078,
@@ -229,6 +309,17 @@ private final class FakeEngine: ReviewEngine, @unchecked Sendable {
     }
 }
 
+private final class FakePublisher: CommentPublisher, @unchecked Sendable {
+    var failure: Error?
+    private(set) var calls: [(path: String, commit: String)] = []
+
+    func publish(_ finding: Finding, repo: String, number: Int, commitSha: String) async throws -> URL {
+        calls.append((finding.path, commitSha))
+        if let failure { throw failure }
+        return URL(string: "https://github.com/\(repo)/pull/\(number)#discussion_r1")!
+    }
+}
+
 private struct FakeDiffSource: PullRequestDiffSource {
     func fetchDiff(repo: String, number: Int) async throws -> String { sampleDiff }
 }
@@ -238,6 +329,7 @@ final class ReviewCoordinatorTests: XCTestCase {
     private let engine = FakeEngine()
     private let preferences = InMemoryPreferences()
     private let usage = InMemoryUsageStore()
+    private let publisher = FakePublisher()
     private let root = FileManager.default.temporaryDirectory.appendingPathComponent("reviews-\(UUID().uuidString)")
 
     override func tearDown() {
@@ -245,7 +337,7 @@ final class ReviewCoordinatorTests: XCTestCase {
     }
 
     private func makeCoordinator() -> ReviewCoordinator {
-        ReviewCoordinator(source: FakeDiffSource(), engine: engine, skill: ReviewSkill(directory: skillDirectory),
+        ReviewCoordinator(source: FakeDiffSource(), publisher: publisher, engine: engine, skill: ReviewSkill(directory: skillDirectory),
                           workspace: ReviewWorkspace(root: root), usageStore: usage, preferences: preferences,
                           now: { fixtureNow })
     }
@@ -318,6 +410,35 @@ final class ReviewCoordinatorTests: XCTestCase {
         await coordinator.waitUntilIdle()
         XCTAssertEqual(engine.inputs.count, 2)
         XCTAssertEqual(coordinator.status(for: updated.reviews[0]), .current)
+    }
+
+    func testPublishedCommentIsRememberedAndNeverPostedTwice() async throws {
+        let dashboard = try decodeDashboard()
+        let pullRequest = dashboard.mine[0]
+        let coordinator = makeCoordinator()
+        coordinator.request(pullRequest)
+        await coordinator.waitUntilIdle()
+        var finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+
+        publisher.failure = DashboardError.cannotWrite
+        await coordinator.publish(finding, in: pullRequest)
+        XCTAssertNotNil(coordinator.publishErrors[ReviewCoordinator.key(finding, in: pullRequest)])
+        XCTAssertNil(coordinator.reviews[pullRequest.id]?.findings[0].postedURL)
+
+        publisher.failure = nil
+        await coordinator.publish(finding, in: pullRequest)
+        XCTAssertEqual(publisher.calls.last?.commit, "sha-1", "posted against the commit that was reviewed")
+        finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        XCTAssertEqual(finding.postedURL?.absoluteString, "https://github.com/acme/api/pull/7#discussion_r1")
+        XCTAssertTrue(coordinator.publishErrors.isEmpty)
+
+        await coordinator.publish(finding, in: pullRequest)
+        XCTAssertEqual(publisher.calls.count, 2, "the second click on a published comment does nothing")
+
+        // Survives a restart: it is in review.json.
+        let reloaded = makeCoordinator()
+        reloaded.sync(with: dashboard)
+        XCTAssertNotNil(reloaded.reviews[pullRequest.id]?.findings[0].postedURL)
     }
 
     func testDonePullRequestComesBackOnlyOnNewActivity() throws {

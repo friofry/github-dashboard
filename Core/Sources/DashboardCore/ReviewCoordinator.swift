@@ -5,6 +5,11 @@ public protocol PullRequestDiffSource: Sendable {
     func fetchDiff(repo: String, number: Int) async throws -> String
 }
 
+public protocol CommentPublisher: Sendable {
+    /// Posts the finding's comment on the pull request and returns where it landed.
+    func publish(_ finding: Finding, repo: String, number: Int, commitSha: String) async throws -> URL
+}
+
 public protocol ReviewPreferences: AnyObject {
     var autoReview: Bool { get set }
     var makeLessons: Bool { get set }
@@ -53,6 +58,9 @@ public final class ReviewCoordinator {
     public var language: String { didSet { preferences.reviewLanguage = language } }
 
     private var done: [String: Date] { didSet { preferences.reviewDone = done } }
+    /// Findings being published right now, and the last error per finding, keyed by PR id and finding id.
+    public private(set) var publishing: Set<String> = []
+    public private(set) var publishErrors: [String: String] = [:]
     private var working: [String: Phase] = [:]
     private var failures: [String: String] = [:]
     /// "id@sha" of automatic attempts, so a failing review is not retried on every refresh.
@@ -64,6 +72,7 @@ public final class ReviewCoordinator {
     private var reviewRequests: [PullRequest] = []
 
     private let source: PullRequestDiffSource
+    private let publisher: CommentPublisher?
     private let engine: ReviewEngine
     private let skill: ReviewSkill
     private let workspace: ReviewWorkspace
@@ -71,9 +80,10 @@ public final class ReviewCoordinator {
     private let preferences: ReviewPreferences
     private let now: () -> Date
 
-    public init(source: PullRequestDiffSource, engine: ReviewEngine, skill: ReviewSkill, workspace: ReviewWorkspace,
+    public init(source: PullRequestDiffSource, publisher: CommentPublisher? = nil, engine: ReviewEngine, skill: ReviewSkill, workspace: ReviewWorkspace,
                 usageStore: UsageStore, preferences: ReviewPreferences, now: @escaping () -> Date = Date.init) {
         self.source = source
+        self.publisher = publisher
         self.engine = engine
         self.skill = skill
         self.workspace = workspace
@@ -175,6 +185,32 @@ public final class ReviewCoordinator {
                 await self.run(self.queue.removeFirst())
             }
             self?.worker = nil
+        }
+    }
+
+    public static func key(_ finding: Finding, in pullRequest: PullRequest) -> String {
+        "\(pullRequest.id)|\(finding.id)"
+    }
+
+    /// Posts one comment to GitHub as the user. Only ever called from an explicit, confirmed click.
+    public func publish(_ finding: Finding, in pullRequest: PullRequest) async {
+        let key = Self.key(finding, in: pullRequest)
+        let repo = pullRequest.repository.nameWithOwner
+        guard let publisher, finding.postedURL == nil, publishing.insert(key).inserted else { return }
+        defer { publishing.remove(key) }
+        publishErrors[key] = nil
+        do {
+            let commit = reviews[pullRequest.id]?.pr?.headSha ?? pullRequest.headRefOid
+            let url = try await publisher.publish(finding, repo: repo, number: pullRequest.number, commitSha: commit)
+            // Remember it in the review file, so the comment cannot be posted twice after a restart.
+            guard var review = reviews[pullRequest.id],
+                  let index = review.findings.firstIndex(where: { $0.id == finding.id })
+            else { return }
+            review.findings[index].postedURL = url
+            reviews[pullRequest.id] = review
+            try workspace.save(review, repo: repo, number: pullRequest.number)
+        } catch {
+            publishErrors[key] = error.localizedDescription
         }
     }
 

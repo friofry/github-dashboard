@@ -24,6 +24,8 @@ public struct Finding: Codable, Identifiable, Sendable, Equatable {
     public let comment: String
     /// Set by the app: whether `path:line` is part of the diff, so GitHub can anchor a comment there.
     public var anchored: Bool?
+    /// Set by the app once the user has published the comment: where it is on GitHub.
+    public var postedURL: URL?
 
     public var id: String { "\(path):\(line):\(title)" }
 }

@@ -52,7 +52,7 @@ struct ReviewRow: View {
             if let review {
                 Text(review.summary).font(.callout).foregroundStyle(.secondary).padding(.vertical, 2)
                 ForEach(review.sortedFindings) { finding in
-                    FindingCard(finding: finding, link: coordinator.link(for: finding, in: pullRequest))
+                    FindingCard(coordinator: coordinator, pullRequest: pullRequest, finding: finding)
                 }
             } else {
                 Text("Not reviewed yet.").font(.callout).foregroundStyle(.secondary)
@@ -146,10 +146,14 @@ struct SeverityCounts: View {
 
 struct FindingCard: View {
     @Environment(\.openURL) private var openURL
+    let coordinator: ReviewCoordinator
+    let pullRequest: PullRequest
     let finding: Finding
-    let link: URL?
+    @State private var confirmsPublish = false
 
     var body: some View {
+        let link = coordinator.link(for: finding, in: pullRequest)
+        let key = ReviewCoordinator.key(finding, in: pullRequest)
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 6) {
                 Badge(text: finding.severity.rawValue, color: finding.severity.color)
@@ -175,7 +179,18 @@ struct FindingCard: View {
                 HStack {
                     Text("Comment to post").font(.caption).foregroundStyle(.secondary)
                     Spacer()
+                    if let posted = finding.postedURL {
+                        Button("Published", systemImage: "checkmark.circle.fill") { openURL(posted) }
+                            .controlSize(.small).tint(.green).help("Open the comment on GitHub")
+                    } else if coordinator.publishing.contains(key) {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Button("Publish", systemImage: "paperplane") { confirmsPublish = true }.controlSize(.small)
+                    }
                     Button("Copy", systemImage: "doc.on.doc") { copy(finding.comment) }.controlSize(.small)
+                }
+                if let error = coordinator.publishErrors[key] {
+                    Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                 }
                 Text(finding.comment)
                     .font(.callout.monospaced())
@@ -186,6 +201,15 @@ struct FindingCard: View {
             }
         }
         .padding(.vertical, 6)
+        // Posting is public and cannot be taken back from here, so it always asks first.
+        .confirmationDialog("Publish this comment?", isPresented: $confirmsPublish) {
+            Button("Publish to \(pullRequest.repository.nameWithOwner) #\(pullRequest.number)") {
+                Task { await coordinator.publish(finding, in: pullRequest) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("It will be posted under your GitHub account on \(location).")
+        }
     }
 
     private var location: String {
@@ -308,7 +332,7 @@ struct ClaudeSettingsSection: View {
         } header: {
             Text("Claude reviews")
         } footer: {
-            Text("Automatic reviews cover requests that arrive after you switch this on, and new commits in reviewed pull requests; past the daily limit they wait for you. Lessons need the teach skill in Claude Code and cost more than the review itself. Nothing is ever posted to GitHub for you.")
+            Text("Automatic reviews cover requests that arrive after you switch this on, and new commits in reviewed pull requests; past the daily limit they wait for you. Lessons need the teach skill in Claude Code and cost more than the review itself. A comment is posted to GitHub only when you press Publish and confirm.")
         }
     }
 }

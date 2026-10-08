@@ -51,11 +51,13 @@ for you. Open **Claude reviews**, press **Review**, and each finding shows:
 - a severity (high, medium, low) and a category: regression, security, reliability, modularity, structure, smell
 - a link to the exact line on github.com
 - what is wrong, a failing example and a fix, in plain words
-- a comment ready to copy and post
+- a comment ready to post: **Publish** puts it on that line of the pull request under your account, after you
+  confirm; **Copy** if you would rather paste it yourself
 
 Click a pull request to open its findings. **Mark as done** hides it until there is new activity in it.
 
-Nothing is posted to GitHub for you. In Settings you can also:
+Nothing is posted to GitHub unless you press Publish. Publishing needs a token that may write to the
+repository; a read-only token is enough for everything else. In Settings you can also:
 
 - **Review new requests automatically** - requests that arrive after you switch it on, and new commits in
   pull requests already reviewed. A daily spending limit keeps a burst of requests from running away.

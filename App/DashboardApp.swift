@@ -65,6 +65,7 @@ final class AppModel {
         let home = support.appendingPathComponent(config.bundleIdentifier)
         return ReviewCoordinator(
             source: service,
+            publisher: service,
             engine: ClaudeCLI(skill: skill, workDirectory: home.appendingPathComponent("claude")),
             skill: skill,
             workspace: ReviewWorkspace(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("learn")),
