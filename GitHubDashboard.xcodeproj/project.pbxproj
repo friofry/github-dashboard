@@ -11,6 +11,7 @@
 		514C212DE61AA6EEEDDCC765 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1ECAF84357F5BE4FA51AA26B /* SettingsView.swift */; };
 		B92A53D0E5557087BB640C11 /* DashboardApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0A62481BBD657341F79B7A4 /* DashboardApp.swift */; };
 		C8B88B2B59ED7852686DE6A7 /* RootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6BF30C0B94752E7084D0630C /* RootView.swift */; };
+		CA04CDDFE4B3E21135003DB9 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = EA0BEF37FA193CE88D3649E8 /* Assets.xcassets */; };
 		DD6DFD6DE936DA7BB68810EF /* CodeViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 696A0FA4C61A7B95B160D48A /* CodeViews.swift */; };
 		E10615ACF40A0916341730B4 /* PullRequestViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7285A6361F27C14107F36B28 /* PullRequestViews.swift */; };
 /* End PBXBuildFile section */
@@ -23,6 +24,7 @@
 		7285A6361F27C14107F36B28 /* PullRequestViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PullRequestViews.swift; sourceTree = "<group>"; };
 		933548D672563F9C6109E931 /* Core */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Core; path = Core; sourceTree = SOURCE_ROOT; };
 		B0A62481BBD657341F79B7A4 /* DashboardApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardApp.swift; sourceTree = "<group>"; };
+		EA0BEF37FA193CE88D3649E8 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		FE48E3086AFFA29EC1BBBBFB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -58,6 +60,7 @@
 		1A547CBE7C5F5E30454C9EBE /* App */ = {
 			isa = PBXGroup;
 			children = (
+				EA0BEF37FA193CE88D3649E8 /* Assets.xcassets */,
 				696A0FA4C61A7B95B160D48A /* CodeViews.swift */,
 				B0A62481BBD657341F79B7A4 /* DashboardApp.swift */,
 				FE48E3086AFFA29EC1BBBBFB /* Info.plist */,
@@ -84,6 +87,7 @@
 			buildConfigurationList = D918691EE5872218EC532F09 /* Build configuration list for PBXNativeTarget "GitHubDashboard" */;
 			buildPhases = (
 				E53522A986A51A70D9CF2A93 /* Sources */,
+				F7FE1DCBE88AF048602019DF /* Resources */,
 				6320DFC60A55877B0AAA3515 /* Frameworks */,
 			);
 			buildRules = (
@@ -134,6 +138,17 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		F7FE1DCBE88AF048602019DF /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CA04CDDFE4B3E21135003DB9 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		E53522A986A51A70D9CF2A93 /* Sources */ = {
