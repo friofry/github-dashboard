@@ -12,6 +12,7 @@ final class GitHubServiceTests: XCTestCase {
         let dashboard = try await service().fetchPullRequests(orgs: [], now: fixtureNow)
 
         XCTAssertEqual(dashboard.viewer, "me")
+        XCTAssertEqual(dashboard.organizations, ["acme", "globex"])
         XCTAssertEqual(dashboard.mineTotal, 1)
         XCTAssertEqual(dashboard.reviewsTotal, 1)
         XCTAssertEqual(dashboard.mine.first?.ci, .failure)
@@ -184,6 +185,39 @@ final class DashboardStoreTests: XCTestCase {
         _ = store.visit(dashboard.mine[0])
 
         XCTAssertEqual(store.sorted(dashboard.mine + dashboard.reviews).map(\.id), ["PR_2", "PR_1"])
+    }
+
+    func testScopeCheckboxesListViewerOrganizationsAndCustomOwners() async {
+        preferences.orgs = "initech"
+        let store = makeStore()
+        XCTAssertEqual(store.availableOwners, ["initech"], "before the first load only saved owners are known")
+
+        await store.refresh()
+        XCTAssertEqual(store.availableOwners, ["me", "acme", "globex", "initech"])
+        XCTAssertTrue(store.isSelected("Initech"))
+        XCTAssertFalse(store.isSelected("me"))
+
+        store.setOwner("me", selected: true)
+        store.setOwner("ACME", selected: true)
+        store.setOwner("initech", selected: false)
+        XCTAssertEqual(preferences.orgs, "me, ACME")
+        XCTAssertEqual(store.availableOwners, ["me", "acme", "globex"])
+
+        await store.refresh()
+        XCTAssertTrue((transport.lastVariables["week"] as? String)?.hasSuffix(" org:me org:ACME") == true)
+    }
+
+    func testScopeChangeDuringALoadIsNotLost() async {
+        let store = makeStore()
+        transport.duringFirstRequest = {
+            store.setOwner("acme", selected: true)
+            await store.refresh()
+        }
+        await store.refresh()
+
+        XCTAssertTrue((transport.lastVariables["week"] as? String)?.hasSuffix(" org:acme") == true)
+        XCTAssertEqual(transport.statsRequests.count, 1, "stats for the outdated scope are skipped")
+        XCTAssertFalse(store.isLoading)
     }
 
     func testMissingTokenAsksForOneAndSavingRecovers() async {

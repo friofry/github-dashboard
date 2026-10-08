@@ -34,13 +34,14 @@ Everything is optional. Copy `.env.example` to `.env` and edit:
 
 | Key | What it does |
 |---|---|
-| `GITHUB_ORGS` | Show only these organizations, e.g. `acme, globex`. Empty = all repositories. |
+| `GITHUB_ORGS` | Show only these organizations or users, e.g. `acme, octocat`. Empty = all repositories. |
 | `IGNORED_LOGINS` | Hide activity from these logins, e.g. a CI account. Bots are always hidden. |
 | `BUNDLE_ID`, `DEVELOPMENT_TEAM` | App identity and signing, for a real device. |
 | `GH_TOKEN` | iOS Simulator only: token handed to the app at launch. |
 | `IOS_SIMULATOR` | Simulator name for `run_ios.sh`. |
 
-`.env` is git-ignored. Organizations and ignored logins can also be changed later in Settings.
+`.env` is git-ignored. It only sets the defaults: in Settings you can tick your personal account and each
+organization, or add another one by name.
 
 ## How it counts
 

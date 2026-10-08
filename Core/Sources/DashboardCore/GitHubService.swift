@@ -27,7 +27,7 @@ extension URLSession: HTTPTransport {
 }
 
 public protocol DashboardService: Sendable {
-    /// - Parameter orgs: limits every list to these organizations; empty means all repositories.
+    /// - Parameter orgs: limits every list to these owners (organizations or users); empty means all repositories.
     func fetchPullRequests(orgs: [String], now: Date) async throws -> Dashboard
     /// Slower than the lists on busy accounts, so it is loaded separately.
     func fetchCodeStats(orgs: [String], now: Date) async throws -> CodeStats
@@ -59,6 +59,7 @@ public struct GitHubService: DashboardService {
         ])
         return Dashboard(
             viewer: payload.viewer.login,
+            organizations: payload.viewer.organizations?.nodes.compactMap { $0?.login } ?? [],
             tokenSource: token.source,
             weekStart: CodeStats.weekStart(for: now, calendar: calendar),
             mine: payload.mine.nodes.compactMap { $0 },
@@ -147,8 +148,13 @@ private struct Search<Node: Decodable>: Decodable {
     let pageInfo: PageInfo?
 }
 
+private struct Viewer: Decodable {
+    let login: String
+    let organizations: Connection<Actor>?
+}
+
 private struct ListsPayload: Decodable {
-    let viewer: Actor
+    let viewer: Viewer
     let mine: Search<PullRequest>
     let reviews: Search<PullRequest>
 }
@@ -168,7 +174,7 @@ private struct Response<Payload: Decodable>: Decodable {
 extension GitHubService {
     fileprivate static let listsQuery = """
     query($mine: String!, $reviews: String!) {
-      viewer { login }
+      viewer { login organizations(first: 100) { nodes { login } } }
       mine: search(query: $mine, type: ISSUE, first: 50) { issueCount nodes { ...PR } }
       reviews: search(query: $reviews, type: ISSUE, first: 50) { issueCount nodes { ...PR } }
     }

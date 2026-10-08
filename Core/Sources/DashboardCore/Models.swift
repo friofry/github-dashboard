@@ -160,6 +160,8 @@ extension PullRequest {
 
 public struct Dashboard: Sendable {
     public let viewer: String
+    /// Organizations the viewer belongs to, as far as the token is allowed to see.
+    public let organizations: [String]
     public let tokenSource: TokenSource
     public let weekStart: Date
     public let mine: [PullRequest]

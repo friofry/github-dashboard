@@ -17,9 +17,15 @@ final class FakeTransport: HTTPTransport, @unchecked Sendable {
     /// One body per stats page; the last one repeats.
     var statsBodies = [statsJSON]
     private(set) var requests: [URLRequest] = []
+    /// Runs once, while the first request is in flight.
+    var duringFirstRequest: (@MainActor () async -> Void)?
 
     func send(_ request: URLRequest) async throws -> (Data, URLResponse) {
         requests.append(request)
+        if let hook = duringFirstRequest {
+            duringFirstRequest = nil
+            await hook()
+        }
         let status = statuses.isEmpty ? 200 : statuses.removeFirst()
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         let variables = Self.variables(of: request)
@@ -60,7 +66,7 @@ final class FakeTokenStore: TokenStore, @unchecked Sendable {
 let listsJSON = """
 {
   "data": {
-    "viewer": { "login": "me" },
+    "viewer": { "login": "me", "organizations": { "nodes": [{ "login": "acme" }, { "login": "globex" }] } },
     "mine": {
       "issueCount": 1,
       "nodes": [{

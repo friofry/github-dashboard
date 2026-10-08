@@ -17,7 +17,7 @@ public final class DashboardStore {
     public private(set) var lastRefresh: Date?
     public private(set) var hasStoredToken = false
 
-    /// Comma or space separated organizations; empty means all repositories.
+    /// Comma or space separated repository owners (organizations or users); empty means all repositories.
     public var orgs: String { didSet { preferences.orgs = orgs } }
     public var ignoredLogins: String { didSet { preferences.ignoredLogins = ignoredLogins } }
 
@@ -27,6 +27,8 @@ public final class DashboardStore {
     private let tokenStore: TokenStore?
     private let now: () -> Date
     private var refreshLoop: Task<Void, Never>?
+    private var refreshQueued = false
+    private var loadedScope: [String]?
 
     public init(service: DashboardService, preferences: PreferencesStore, tokenStore: TokenStore? = nil,
                 now: @escaping () -> Date = Date.init) {
@@ -54,23 +56,60 @@ public final class DashboardStore {
     }
 
     public func refresh() async {
-        guard !isLoading else { return }
+        // A request that arrives mid-load (say, after a scope change) must not be lost: run it right after.
+        guard !isLoading else {
+            refreshQueued = true
+            return
+        }
         isLoading = true
         defer { isLoading = false }
+        repeat {
+            refreshQueued = false
+            await load()
+        } while refreshQueued
+    }
+
+    private func load() async {
         hasStoredToken = await tokenStore?.token() != nil
         do {
             let scope = Self.list(orgs)
+            if scope != loadedScope { stats = nil }
             dashboard = try await service.fetchPullRequests(orgs: scope, now: now())
+            loadedScope = scope
             lastRefresh = now()
             errorMessage = nil
             needsToken = false
-            // Lists are on screen already; the weekly numbers follow when they are ready.
+            // Lists are on screen already; the weekly numbers follow, unless a newer request is waiting.
+            guard !refreshQueued else { return }
             stats = try await service.fetchCodeStats(orgs: scope, now: now())
         } catch {
             errorMessage = error.localizedDescription
             let failure = error as? DashboardError
             needsToken = failure == .missingToken || failure == .unauthorized
         }
+    }
+
+    // MARK: Scope
+
+    /// Owners offered as checkboxes: the viewer, their organizations, then anything added by hand.
+    public var availableOwners: [String] {
+        var owners = dashboard.map { [$0.viewer] + $0.organizations } ?? []
+        for owner in Self.list(orgs) where !owners.contains(where: { $0.caseInsensitiveCompare(owner) == .orderedSame }) {
+            owners.append(owner)
+        }
+        return owners
+    }
+
+    public func isSelected(_ owner: String) -> Bool {
+        Self.list(orgs).contains { $0.caseInsensitiveCompare(owner) == .orderedSame }
+    }
+
+    public func setOwner(_ owner: String, selected: Bool) {
+        let name = owner.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        var owners = Self.list(orgs).filter { $0.caseInsensitiveCompare(name) != .orderedSame }
+        if selected { owners.append(name) }
+        orgs = owners.joined(separator: ", ")
     }
 
     // MARK: Token
