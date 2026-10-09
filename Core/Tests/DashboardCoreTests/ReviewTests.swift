@@ -168,6 +168,9 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertTrue(input.contains(#""headSha":"sha-1""#))
         XCTAssertTrue(input.contains("cut short"))
         XCTAssertTrue(input.contains("Reads hit the database"), "the description tells the model why")
+        XCTAssertEqual(dashboard.mine[0].headRefName, "feature/cache")
+        XCTAssertEqual(dashboard.mine[0].baseRefName, "main")
+        XCTAssertNil(dashboard.reviews[0].headRefName, "older data without branches still decodes")
     }
 
     func testWorkspacePathStaysUnderTheRoot() {

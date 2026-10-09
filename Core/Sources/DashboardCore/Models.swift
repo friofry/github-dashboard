@@ -85,6 +85,9 @@ public struct PullRequest: Decodable, Identifiable, Sendable {
     public let author: Actor?
     /// The description as plain text. Older saved data has none.
     public let bodyText: String?
+    /// The branch the changes are on and the branch they go into. Older saved data has neither.
+    public let headRefName: String?
+    public let baseRefName: String?
     let reviewDecision: String?
     let commits: Connection<CommitNode>
     let timelineItems: Connection<TimelineItem>
