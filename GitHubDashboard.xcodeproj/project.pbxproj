@@ -307,6 +307,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				DASHBOARD_BUNDLE_ID = "dev.example.github-dashboard";
+				DASHBOARD_COMMIT = "";
 				DASHBOARD_IGNORED_LOGINS = "";
 				DASHBOARD_ORGS = "";
 				DEVELOPMENT_TEAM = "";
@@ -337,6 +338,7 @@
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				DASHBOARD_BUNDLE_ID = "dev.example.github-dashboard";
+				DASHBOARD_COMMIT = "";
 				DASHBOARD_IGNORED_LOGINS = "";
 				DASHBOARD_ORGS = "";
 				DEVELOPMENT_TEAM = "";

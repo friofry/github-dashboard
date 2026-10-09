@@ -17,10 +17,14 @@ public struct ReviewWorkspace: Sendable {
             .appendingPathComponent("pr-\(number)")
     }
 
+    /// Two repositories with the same name share a folder, so a review that says it is about another one is not returned.
     public func loadReview(repo: String, number: Int) -> Review? {
         let file = directory(repo: repo, number: number).appendingPathComponent("review.json")
-        guard let data = try? Data(contentsOf: file) else { return nil }
-        return try? Self.decoder.decode(Review.self, from: data)
+        guard let data = try? Data(contentsOf: file),
+              let review = try? Self.decoder.decode(Review.self, from: data)
+        else { return nil }
+        if let subject = review.pr, subject.repo.caseInsensitiveCompare(repo) != .orderedSame { return nil }
+        return review
     }
 
     public func save(_ review: Review, repo: String, number: Int) throws {

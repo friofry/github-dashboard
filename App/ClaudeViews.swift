@@ -258,7 +258,7 @@ struct ClaudeUsageView: View {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
                     UsageTile(title: "Today", totals: UsageTotals(entries, since: Calendar.current.startOfDay(for: .now)))
                     UsageTile(title: "This week", totals: UsageTotals(entries, since: weekStart))
-                    UsageTile(title: "All time", totals: UsageTotals(entries))
+                    UsageTile(title: "Last 12 months", totals: UsageTotals(entries))
                 }
 
                 GroupBox("Runs") {

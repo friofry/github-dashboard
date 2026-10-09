@@ -17,6 +17,10 @@ You need Xcode 16 or newer.
 ./run_ios.sh              # build and open in the iOS Simulator
 ```
 
+Each build records the commit it came from; Settings shows it under **Built from** (`-dirty` means it had
+uncommitted changes). `--install` refuses to run with uncommitted changes, so the copy in `/Applications` always
+matches a commit. Both scripts fail if the app does not come up.
+
 ## Sign in
 
 The app needs a GitHub token. It looks for one in this order:
@@ -37,10 +41,10 @@ Everything is optional. Copy `.env.example` to `.env` and edit:
 | `GITHUB_ORGS` | Show only these organizations or users, e.g. `acme, octocat`. Empty = all repositories. |
 | `IGNORED_LOGINS` | Hide activity from these logins, e.g. a CI account. Bots are always hidden. |
 | `BUNDLE_ID`, `DEVELOPMENT_TEAM` | App identity and signing, for a real device. |
-| `GH_TOKEN` | iOS Simulator only: token handed to the app at launch. |
 | `IOS_SIMULATOR` | Simulator name for `run_ios.sh`. |
 
-`.env` is git-ignored. It only sets the defaults: in Settings you can tick your personal account and each
+There is no token in `.env`: `run_ios.sh` hands the simulator `gh auth token`, or `GH_TOKEN` if you export it in
+your shell. `.env` is git-ignored. It only sets the defaults: in Settings you can tick your personal account and each
 organization, or add another one by name.
 
 ## Claude reviews (macOS)
@@ -69,7 +73,9 @@ repository; a read-only token is enough for everything else. In Settings you can
 - **Write a lesson for each review** - a short HTML lesson in `~/learn/<repo>/pr-<number>/` with a diagram of
   the change, where it sits in the code and what was found. Needs the `teach` skill in Claude Code.
 
-**Claude usage** lists every run with its tokens and cost.
+**Claude usage** lists every run of the last twelve months with its tokens and cost. When a review fails, or
+automatic reviews wait because the daily limit is reached, the menu bar icon turns into a warning and its menu
+says which.
 
 The review follows one fixed form, defined by the [pr-review skill](skills/pr-review/SKILL.md). To use the
 same skill in your own Claude Code sessions (`/pr-review owner/repo#123`):

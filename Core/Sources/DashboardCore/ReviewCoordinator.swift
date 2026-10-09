@@ -46,6 +46,8 @@ public final class ReviewCoordinator {
     public let publishing: CommentPublishing
     public let doneMarks: DoneMarks
     public private(set) var usage: [UsageEntry]
+    /// Automatic reviews that are waiting because today's spending reached the daily limit.
+    public private(set) var heldByBudget: Set<String> = []
 
     public var autoReview: Bool {
         didSet {
@@ -130,6 +132,9 @@ public final class ReviewCoordinator {
         UsageTotals(usage, since: Calendar.current.startOfDay(for: now())).costUSD
     }
 
+    /// Reviews of listed pull requests whose last run failed.
+    public var failedCount: Int { failures.count }
+
     // MARK: Actions
 
     /// Call after every dashboard refresh: picks up results from disk and starts the automatic reviews.
@@ -137,15 +142,26 @@ public final class ReviewCoordinator {
         recoverInterruptedRuns()
         reviewRequests = dashboard.reviews
         let everything = dashboard.mine + dashboard.reviews + reviewed
+        let listed = Set(everything.map(\.id))
+        failures = failures.filter { listed.contains($0.key) }
         library.load(everything)
         // Requests an earlier launch queued but never got to.
         for pullRequest in everything where preferences.reviewQueue.contains(pullRequest.id) { request(pullRequest) }
-        guard autoReview else { return }
+        guard autoReview else {
+            heldByBudget = []
+            return
+        }
 
         let decision = AutoReviewPolicy.decide(requests: dashboard.reviews, reviewed: reviewed,
                                                baseline: preferences.reviewBaseline, attempted: attempted,
                                                status: status(for:))
         if preferences.reviewBaseline != decision.baseline { preferences.reviewBaseline = decision.baseline }
+        // Past the daily limit nothing starts and nothing counts as attempted, so these run once the limit resets.
+        guard spentToday < dailyAutoBudget else {
+            heldByBudget = Set(decision.start)
+            return
+        }
+        heldByBudget = []
         for pullRequest in everything where decision.start.contains(pullRequest.id) {
             attempted.insert(AutoReviewPolicy.attemptKey(pullRequest))
             automatic.insert(pullRequest.id)
@@ -156,6 +172,7 @@ public final class ReviewCoordinator {
     public func request(_ pullRequest: PullRequest) {
         guard working[pullRequest.id] == nil, !stillRunning.contains(pullRequest.id) else { return }
         failures[pullRequest.id] = nil
+        heldByBudget.remove(pullRequest.id)
         working[pullRequest.id] = .queued
         queue.append(pullRequest)
         if !preferences.reviewQueue.contains(pullRequest.id) { preferences.reviewQueue.append(pullRequest.id) }
@@ -204,8 +221,12 @@ public final class ReviewCoordinator {
         defer { working[pullRequest.id] = nil }
         // From here the run journal keeps track of it, not the queue.
         preferences.reviewQueue.removeAll { $0 == pullRequest.id }
-        // Many requests can arrive at once; past the daily budget they wait for a manual "Review".
-        if automatic.remove(pullRequest.id) != nil, spentToday >= dailyAutoBudget { return }
+        // Many requests can arrive at once; past the daily budget they wait for a manual "Review" or the next day.
+        if automatic.remove(pullRequest.id) != nil, spentToday >= dailyAutoBudget {
+            attempted.remove(AutoReviewPolicy.attemptKey(pullRequest))
+            heldByBudget.insert(pullRequest.id)
+            return
+        }
 
         var current = RunRecord(kind: .review, pullRequest: pullRequest, startedAt: now())
         do {

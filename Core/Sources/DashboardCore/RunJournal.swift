@@ -29,6 +29,11 @@ public struct RunSink: Sendable {
     public let output: URL
     /// Called with the process id as soon as the run is launched.
     public let started: @Sendable (Int32) -> Void
+
+    public init(output: URL, started: @escaping @Sendable (Int32) -> Void) {
+        self.output = output
+        self.started = started
+    }
 }
 
 /// One small file per unfinished run plus the file its output goes to.

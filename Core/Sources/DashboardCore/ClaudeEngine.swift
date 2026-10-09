@@ -12,7 +12,7 @@ public enum ClaudeError: LocalizedError {
         }
     }
 
-    var usage: ClaudeUsage? {
+    public var usage: ClaudeUsage? {
         if case .failed(_, let usage) = self { return usage }
         return nil
     }
@@ -37,13 +37,13 @@ public protocol ReviewEngine: Sendable {
 }
 
 /// The JSON object `claude -p --output-format json` prints when it finishes.
-struct ClaudeResult {
-    let isError: Bool
-    let text: String
-    let structuredOutput: Data?
-    let usage: ClaudeUsage
+public struct ClaudeResult: Sendable {
+    public let isError: Bool
+    public let text: String
+    public let structuredOutput: Data?
+    public let usage: ClaudeUsage
 
-    init(data: Data) throws {
+    public init(data: Data) throws {
         var object = try JSONSerialization.jsonObject(with: data)
         if let events = object as? [Any], let last = events.last { object = last }
         guard let result = object as? [String: Any] else {
@@ -68,7 +68,7 @@ struct ClaudeResult {
         self.usage = usage
     }
 
-    func review() throws -> Review {
+    public func review() throws -> Review {
         guard !isError else { throw ClaudeError.failed(text.isEmpty ? "Claude reported an error." : text, usage) }
         guard let data = structuredOutput ?? text.data(using: .utf8),
               let review = try? JSONDecoder().decode(Review.self, from: data)
@@ -84,11 +84,17 @@ public struct ClaudeCLI: ReviewEngine {
                                      "~/.claude/local/claude"]
     private let skill: ReviewSkill
     private let workDirectory: URL
+    private let environment: [String: String]
 
-    /// - Parameter workDirectory: a folder the app owns; the skill is copied into it before each review.
-    public init(skill: ReviewSkill, workDirectory: URL) {
+    /// - Parameters:
+    ///   - workDirectory: a folder the app owns; the skill is copied into it before each review.
+    ///   - environment: the app's environment (`AppConfig.environment`); Claude gets it without the GitHub token.
+    public init(skill: ReviewSkill, workDirectory: URL, environment: [String: String]) {
         self.skill = skill
         self.workDirectory = workDirectory
+        self.environment = environment
+        // Claude can exit before reading its input; writing to the closed pipe must fail, not end the app.
+        signal(SIGPIPE, SIG_IGN)
     }
 
     public static var executable: String? {
@@ -124,11 +130,21 @@ public struct ClaudeCLI: ReviewEngine {
         try FileManager.default.copyItem(at: skill.directory, to: target)
     }
 
+    static func claudeEnvironment(from base: [String: String]) -> [String: String] {
+        var environment = base
+        environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
+        // Claude has no use for the GitHub token, so it does not get one.
+        environment["GH_TOKEN"] = nil
+        environment["GITHUB_TOKEN"] = nil
+        return environment
+    }
+
     private func run(_ arguments: [String], options: RunOptions, in directory: URL, input: String,
                      timeout: TimeInterval, sink: RunSink?) async throws -> ClaudeResult {
         guard let executable = Self.executable else { throw ClaudeError.notInstalled }
         var arguments = arguments + ["--max-budget-usd", String(format: "%.2f", options.maxBudgetUSD)]
         if !options.model.isEmpty { arguments += ["--model", options.model] }
+        let environment = Self.claudeEnvironment(from: environment)
 
         return try await Task.detached {
             let process = Process()
@@ -147,11 +163,6 @@ public struct ClaudeCLI: ReviewEngine {
             }
             process.standardOutput = outputFile ?? stdout
             process.standardError = FileHandle.nullDevice
-            var environment = ProcessInfo.processInfo.environment
-            environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
-            // Claude has no use for the GitHub token, so it does not get one.
-            environment["GH_TOKEN"] = nil
-            environment["GITHUB_TOKEN"] = nil
             process.environment = environment
             try process.run()
             sink?.started(process.processIdentifier)
@@ -160,7 +171,7 @@ public struct ClaudeCLI: ReviewEngine {
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
             // Feed stdin from another thread: a large diff would otherwise block before we start reading stdout.
             DispatchQueue.global().async {
-                stdin.fileHandleForWriting.write(Data(input.utf8))
+                try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
                 try? stdin.fileHandleForWriting.close()
             }
             var data = sink == nil ? stdout.fileHandleForReading.readDataToEndOfFile() : Data()

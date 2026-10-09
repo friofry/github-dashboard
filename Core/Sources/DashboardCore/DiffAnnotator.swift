@@ -7,6 +7,12 @@ public struct AnnotatedDiff: Sendable, Equatable {
     public let lines: [String: Set<Int>]
     public let isTruncated: Bool
 
+    public init(text: String, lines: [String: Set<Int>], isTruncated: Bool) {
+        self.text = text
+        self.lines = lines
+        self.isTruncated = isTruncated
+    }
+
     public func contains(path: String, line: Int) -> Bool {
         lines[path]?.contains(line) == true
     }

@@ -20,6 +20,8 @@
 	<string>1.0</string>
 	<key>CFBundleVersion</key>
 	<string>1</string>
+	<key>DashboardCommit</key>
+	<string>$(DASHBOARD_COMMIT)</string>
 	<key>DashboardIgnoredLogins</key>
 	<string>$(DASHBOARD_IGNORED_LOGINS)</string>
 	<key>DashboardOrgs</key>
