@@ -69,6 +69,7 @@ final class AppModel {
             engine: ClaudeCLI(skill: skill, workDirectory: home.appendingPathComponent("claude")),
             skill: skill,
             workspace: ReviewWorkspace(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("learn")),
+            journal: RunJournal(directory: home.appendingPathComponent("runs")),
             usageStore: FileUsageStore(file: home.appendingPathComponent("usage.json")),
             preferences: preferences
         )

@@ -20,7 +20,7 @@ struct ClaudeReviewsView: View {
     private var selected: [PullRequest] { all.filter { selection.contains($0.id) } }
 
     private func visible(_ pullRequests: [PullRequest]) -> [PullRequest] {
-        store.sorted(pullRequests.filter { showsDone || !coordinator.isDone($0) })
+        store.sorted(pullRequests.filter { showsDone || !coordinator.doneMarks.isDone($0) })
     }
 
     var body: some View {
@@ -52,16 +52,16 @@ struct ClaudeReviewsView: View {
         }
         .onChange(of: selection) { selectFirstFinding() }
         // A review that finishes while its pull request is open should show its first finding straight away.
-        .onChange(of: current.flatMap { coordinator.reviews[$0.id]?.pr?.reviewedAt }) { selectFirstFinding() }
+        .onChange(of: current.flatMap { coordinator.library.reviews[$0.id]?.pr?.reviewedAt }) { selectFirstFinding() }
     }
 
     private func selectFirstFinding() {
-        let findings = current.flatMap { coordinator.reviews[$0.id]?.sortedFindings } ?? []
+        let findings = current.flatMap { coordinator.library.reviews[$0.id]?.sortedFindings } ?? []
         if !findings.contains(where: { $0.id == selectedFinding }) { selectedFinding = findings.first?.id }
     }
 
     private var pullRequestColumn: some View {
-        let doneCount = all.filter(coordinator.isDone).count
+        let doneCount = all.filter(coordinator.doneMarks.isDone).count
         return VStack(spacing: 0) {
             List(selection: $selection) {
                 section("Awaiting my review", visible(dashboard.reviews))
@@ -72,7 +72,7 @@ struct ClaudeReviewsView: View {
                 let targets = all.filter { ids.contains($0.id) }
                 if !targets.isEmpty {
                     Button(reviewTitle(for: targets), systemImage: "sparkles") { targets.forEach(coordinator.request) }
-                    if targets.allSatisfy(coordinator.isDone) {
+                    if targets.allSatisfy(coordinator.doneMarks.isDone) {
                         Button("Mark as not done", systemImage: "arrow.uturn.backward.circle") { setDone(targets, false) }
                     } else {
                         Button("Mark as done", systemImage: "checkmark.circle") { setDone(targets, true) }
@@ -106,12 +106,12 @@ struct ClaudeReviewsView: View {
     }
 
     private func reviewTitle(for pullRequests: [PullRequest]) -> String {
-        let verb = pullRequests.contains { coordinator.reviews[$0.id] == nil } ? "Review" : "Re-review"
+        let verb = pullRequests.contains { coordinator.library.reviews[$0.id] == nil } ? "Review" : "Re-review"
         return pullRequests.count == 1 ? "\(verb) with Claude" : "\(verb) \(pullRequests.count) with Claude"
     }
 
     private func setDone(_ pullRequests: [PullRequest], _ isDone: Bool) {
-        withAnimation { pullRequests.forEach { coordinator.setDone($0, isDone) } }
+        withAnimation { pullRequests.forEach { coordinator.doneMarks.set($0, isDone) } }
         if isDone, !showsDone { selection.subtract(pullRequests.map(\.id)) }
     }
 
@@ -124,7 +124,7 @@ struct ClaudeReviewsView: View {
                         Text("\(pullRequest.repository.nameWithOwner.split(separator: "/").last ?? "") #\(pullRequest.number) · \(state(of: pullRequest))")
                             .font(.caption).foregroundStyle(.secondary).lineLimit(1)
                     }
-                    .opacity(coordinator.isDone(pullRequest) ? 0.55 : 1)
+                    .opacity(coordinator.doneMarks.isDone(pullRequest) ? 0.55 : 1)
                     .tag(pullRequest.id)
                 }
             }
@@ -132,7 +132,7 @@ struct ClaudeReviewsView: View {
     }
 
     private func state(of pullRequest: PullRequest) -> String {
-        let counts = coordinator.reviews[pullRequest.id].map { review -> String in
+        let counts = coordinator.library.reviews[pullRequest.id].map { review -> String in
             let parts = Finding.Severity.allCases.compactMap { severity -> String? in
                 let count = review.findings.filter { $0.severity == severity }.count
                 return count > 0 ? "\(count) \(severity.rawValue)" : nil
@@ -151,7 +151,7 @@ struct ClaudeReviewsView: View {
     }
 
     @ViewBuilder private func detail(for pullRequest: PullRequest) -> some View {
-        let review = coordinator.reviews[pullRequest.id]
+        let review = coordinator.library.reviews[pullRequest.id]
         if let finding = review?.findings.first(where: { $0.id == selectedFinding }) {
             FindingDetail(coordinator: coordinator, pullRequest: pullRequest, finding: finding,
                           selection: $selectedFinding)
@@ -172,7 +172,7 @@ struct FindingColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let review = coordinator.reviews[pullRequest.id] {
+            if let review = coordinator.library.reviews[pullRequest.id] {
                 List(selection: $selection) {
                     Section {
                         ForEach(review.sortedFindings) { finding in
@@ -218,17 +218,17 @@ struct FindingColumn: View {
             case .failed: Button("Retry") { coordinator.request(pullRequest) }
             }
             Spacer()
-            if let lesson = coordinator.lessons[pullRequest.id] {
+            if let lesson = coordinator.library.lessons[pullRequest.id] {
                 Button("Lesson", systemImage: "graduationcap") { openURL(lesson) }
                     .labelStyle(.iconOnly).help("Open the lesson for this pull request")
             }
             Button("Open pull request", systemImage: "arrow.up.right.square") { openURL(pullRequest.url) }
                 .labelStyle(.iconOnly).help("Open the pull request on GitHub")
-            if coordinator.isDone(pullRequest) {
-                Button("Not done", systemImage: "arrow.uturn.backward.circle") { coordinator.setDone(pullRequest, false) }
+            if coordinator.doneMarks.isDone(pullRequest) {
+                Button("Not done", systemImage: "arrow.uturn.backward.circle") { coordinator.doneMarks.set(pullRequest, false) }
                     .help("Bring this pull request back")
             } else {
-                Button("Done", systemImage: "checkmark.circle") { coordinator.setDone(pullRequest, true) }
+                Button("Done", systemImage: "checkmark.circle") { coordinator.doneMarks.set(pullRequest, true) }
                     .help("Hide until there is new activity in this pull request")
             }
         }

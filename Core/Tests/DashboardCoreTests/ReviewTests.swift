@@ -248,6 +248,37 @@ final class CommentPublishingTests: XCTestCase {
     }
 }
 
+@MainActor
+final class AutoReviewPolicyTests: XCTestCase {
+    private func decide(baseline: [String]?, attempted: Set<String> = [], requestStatus: ReviewCoordinator.Status = .none,
+                        reviewedStatus: ReviewCoordinator.Status = .none) throws -> AutoReviewPolicy.Decision {
+        let dashboard = try decodeDashboard()
+        // PR_2 is a review request; PR_1 stands in for a pull request I already reviewed myself.
+        return AutoReviewPolicy.decide(requests: dashboard.reviews, reviewed: dashboard.mine, baseline: baseline,
+                                       attempted: attempted) { $0.id == "PR_2" ? requestStatus : reviewedStatus }
+    }
+
+    func testSwitchingOnRecordsTheBacklogAndStartsNothing() throws {
+        XCTAssertEqual(try decide(baseline: nil), .init(baseline: ["PR_2"], start: []))
+    }
+
+    func testOnlyRequestsOutsideTheBaselineStart() throws {
+        XCTAssertEqual(try decide(baseline: ["PR_2"]).start, [])
+        XCTAssertEqual(try decide(baseline: []).start, ["PR_2"])
+    }
+
+    func testNewCommitsRestartAReviewAnywhereButNothingStartsFromScratchForReviewedOnes() throws {
+        XCTAssertEqual(try decide(baseline: ["PR_2"], requestStatus: .outdated, reviewedStatus: .outdated).start, ["PR_2", "PR_1"])
+        XCTAssertEqual(try decide(baseline: [], requestStatus: .current, reviewedStatus: .none).start, [])
+    }
+
+    func testAnAttemptAtTheSameCommitIsNotRepeated() throws {
+        XCTAssertEqual(try decide(baseline: [], attempted: ["PR_2@sha-2"]).start, [])
+        XCTAssertEqual(try decide(baseline: [], attempted: ["PR_2@older"]).start, ["PR_2"])
+        XCTAssertEqual(try decide(baseline: [], requestStatus: .failed("x")).start, [])
+    }
+}
+
 final class ClaudeResultTests: XCTestCase {
     private let output = """
     {"type":"result","subtype":"success","is_error":false,"duration_ms":11751,"total_cost_usd":0.078,
@@ -324,9 +355,11 @@ private final class FakeEngine: ReviewEngine, @unchecked Sendable {
     var failure: ClaudeError?
     private(set) var inputs: [String] = []
     private(set) var lessonPrompts: [String] = []
+    var duringReview: (@MainActor () async -> Void)?
 
-    func review(input: String, schema: String, options: RunOptions) async throws -> (Review, ClaudeUsage) {
+    func review(input: String, schema: String, options: RunOptions, sink: RunSink?) async throws -> (Review, ClaudeUsage) {
         inputs.append(input)
+        await duringReview?()
         if let failure { throw failure }
         let review = try JSONDecoder().decode(Review.self, from: Data(contentsOf: skillDirectory.appendingPathComponent("EXAMPLE.json")))
         var spent = ClaudeUsage()
@@ -335,7 +368,7 @@ private final class FakeEngine: ReviewEngine, @unchecked Sendable {
         return (review, spent)
     }
 
-    func lesson(in directory: URL, prompt: String, options: RunOptions) async throws -> ClaudeUsage {
+    func lesson(in directory: URL, prompt: String, options: RunOptions, sink: RunSink?) async throws -> ClaudeUsage {
         lessonPrompts.append(prompt)
         let lessons = directory.appendingPathComponent("lessons")
         try FileManager.default.createDirectory(at: lessons, withIntermediateDirectories: true)
@@ -367,6 +400,7 @@ final class ReviewCoordinatorTests: XCTestCase {
     private let preferences = InMemoryPreferences()
     private let usage = InMemoryUsageStore()
     private let publisher = FakePublisher()
+    private lazy var journal = RunJournal(directory: root.appendingPathComponent("runs"))
     private let root = FileManager.default.temporaryDirectory.appendingPathComponent("reviews-\(UUID().uuidString)")
 
     override func tearDown() {
@@ -375,7 +409,8 @@ final class ReviewCoordinatorTests: XCTestCase {
 
     private func makeCoordinator() -> ReviewCoordinator {
         ReviewCoordinator(source: FakeDiffSource(), publisher: publisher, engine: engine, skill: ReviewSkill(directory: skillDirectory),
-                          workspace: ReviewWorkspace(root: root), usageStore: usage, preferences: preferences,
+                          workspace: ReviewWorkspace(root: root), journal: journal, usageStore: usage,
+                          preferences: preferences,
                           now: { fixtureNow })
     }
 
@@ -390,11 +425,11 @@ final class ReviewCoordinatorTests: XCTestCase {
         await coordinator.waitUntilIdle()
 
         XCTAssertEqual(coordinator.status(for: pullRequest), .current)
-        let review = try XCTUnwrap(coordinator.reviews[pullRequest.id])
+        let review = try XCTUnwrap(coordinator.library.reviews[pullRequest.id])
         XCTAssertEqual(review.pr?.headSha, "sha-1")
         // api/users.go:42 is not in the sample diff, :17 is not either -> links fall back to the file at that commit.
         XCTAssertEqual(review.findings.map(\.anchored), [false, false])
-        XCTAssertEqual(coordinator.link(for: review.findings[0], in: pullRequest)?.absoluteString,
+        XCTAssertEqual(coordinator.library.link(for: review.findings[0], in: pullRequest)?.absoluteString,
                        "https://github.com/acme/api/blob/sha-1/api/users.go#L42")
         XCTAssertTrue(engine.inputs[0].contains("   11 + added one"))
 
@@ -415,7 +450,7 @@ final class ReviewCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(usage.load().map(\.kind), [.review, .lesson])
         XCTAssertTrue(engine.lessonPrompts[0].contains("acme/api#7 \"Add cache\""))
-        XCTAssertEqual(coordinator.lessons[dashboard.mine[0].id]?.lastPathComponent, "0001-what-changed.html")
+        XCTAssertEqual(coordinator.library.lessons[dashboard.mine[0].id]?.lastPathComponent, "0001-what-changed.html")
     }
 
     func testAutoReviewSkipsTheBacklogButTakesNewRequestsAndNewCommits() async throws {
@@ -455,27 +490,27 @@ final class ReviewCoordinatorTests: XCTestCase {
         let coordinator = makeCoordinator()
         coordinator.request(pullRequest)
         await coordinator.waitUntilIdle()
-        var finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        var finding = try XCTUnwrap(coordinator.library.reviews[pullRequest.id]?.findings[0])
 
         publisher.failure = DashboardError.cannotWrite
-        await coordinator.publish(finding, in: pullRequest)
-        XCTAssertNotNil(coordinator.publishErrors[ReviewCoordinator.key(finding, in: pullRequest)])
-        XCTAssertNil(coordinator.reviews[pullRequest.id]?.findings[0].postedURL)
+        await coordinator.publishing.publish(finding, in: pullRequest)
+        XCTAssertNotNil(coordinator.publishing.errors[CommentPublishing.key(finding, in: pullRequest)])
+        XCTAssertNil(coordinator.library.reviews[pullRequest.id]?.findings[0].postedURL)
 
         publisher.failure = nil
-        await coordinator.publish(finding, in: pullRequest)
+        await coordinator.publishing.publish(finding, in: pullRequest)
         XCTAssertEqual(publisher.calls.last?.commit, "sha-1", "posted against the commit that was reviewed")
-        finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        finding = try XCTUnwrap(coordinator.library.reviews[pullRequest.id]?.findings[0])
         XCTAssertEqual(finding.postedURL?.absoluteString, "https://github.com/acme/api/pull/7#discussion_r1")
-        XCTAssertTrue(coordinator.publishErrors.isEmpty)
+        XCTAssertTrue(coordinator.publishing.errors.isEmpty)
 
-        await coordinator.publish(finding, in: pullRequest)
+        await coordinator.publishing.publish(finding, in: pullRequest)
         XCTAssertEqual(publisher.calls.count, 2, "the second click on a published comment does nothing")
 
         // Survives a restart: it is in review.json.
         let reloaded = makeCoordinator()
         reloaded.sync(with: dashboard)
-        XCTAssertNotNil(reloaded.reviews[pullRequest.id]?.findings[0].postedURL)
+        XCTAssertNotNil(reloaded.library.reviews[pullRequest.id]?.findings[0].postedURL)
     }
 
     func testCommentCanBeEditedUntilItIsPublished() async throws {
@@ -484,23 +519,23 @@ final class ReviewCoordinatorTests: XCTestCase {
         let coordinator = makeCoordinator()
         coordinator.request(pullRequest)
         await coordinator.waitUntilIdle()
-        var finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
-        XCTAssertNotNil(coordinator.diff(for: pullRequest)?.file("api/users.go"))
+        var finding = try XCTUnwrap(coordinator.library.reviews[pullRequest.id]?.findings[0])
+        XCTAssertNotNil(coordinator.library.diff(for: pullRequest)?.file("api/users.go"))
 
-        coordinator.setComment("  Shorter wording.  ", for: finding, in: pullRequest)
-        finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        coordinator.publishing.setComment("  Shorter wording.  ", for: finding, in: pullRequest)
+        finding = try XCTUnwrap(coordinator.library.reviews[pullRequest.id]?.findings[0])
         XCTAssertEqual(finding.comment, "Shorter wording.")
-        coordinator.setComment("   ", for: finding, in: pullRequest)
-        XCTAssertEqual(coordinator.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.", "empty text is ignored")
+        coordinator.publishing.setComment("   ", for: finding, in: pullRequest)
+        XCTAssertEqual(coordinator.library.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.", "empty text is ignored")
 
-        await coordinator.publish(finding, in: pullRequest)
-        finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
-        coordinator.setComment("Too late.", for: finding, in: pullRequest)
-        XCTAssertEqual(coordinator.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.")
+        await coordinator.publishing.publish(finding, in: pullRequest)
+        finding = try XCTUnwrap(coordinator.library.reviews[pullRequest.id]?.findings[0])
+        coordinator.publishing.setComment("Too late.", for: finding, in: pullRequest)
+        XCTAssertEqual(coordinator.library.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.")
 
         let reloaded = makeCoordinator()
         reloaded.sync(with: dashboard)
-        XCTAssertEqual(reloaded.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.")
+        XCTAssertEqual(reloaded.library.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.")
     }
 
     func testDonePullRequestComesBackOnlyOnNewActivity() throws {
@@ -511,17 +546,17 @@ final class ReviewCoordinatorTests: XCTestCase {
         XCTAssertEqual(coordinator.pending.map(\.id), ["PR_2"])
 
         // fixtureNow is after the pull request's last update.
-        coordinator.setDone(request, true)
-        XCTAssertTrue(coordinator.isDone(request))
+        coordinator.doneMarks.set(request, true)
+        XCTAssertTrue(coordinator.doneMarks.isDone(request))
         XCTAssertTrue(coordinator.pending.isEmpty)
         XCTAssertEqual(preferences.reviewDone["PR_2"], fixtureNow)
 
         // Marked done before the latest activity: it is back.
         preferences.reviewDone = ["PR_2": request.updatedAt.addingTimeInterval(-60)]
-        XCTAssertFalse(makeCoordinator().isDone(request))
+        XCTAssertFalse(makeCoordinator().doneMarks.isDone(request))
 
-        coordinator.setDone(request, false)
-        XCTAssertFalse(coordinator.isDone(request))
+        coordinator.doneMarks.set(request, false)
+        XCTAssertFalse(coordinator.doneMarks.isDone(request))
         XCTAssertNil(preferences.reviewDone["PR_2"])
     }
 
@@ -542,6 +577,102 @@ final class ReviewCoordinatorTests: XCTestCase {
         coordinator.request(dashboard.reviews[0])
         await coordinator.waitUntilIdle()
         XCTAssertEqual(engine.inputs.count, 1)
+    }
+
+    // MARK: Runs that outlive the app
+
+    /// What Claude would have written to the run's output file.
+    private func finishedOutput(cost: Double = 0.4) throws -> Data {
+        let review = try JSONSerialization.jsonObject(with: Data(contentsOf: skillDirectory.appendingPathComponent("EXAMPLE.json")))
+        return try JSONSerialization.data(withJSONObject: [
+            "is_error": false, "total_cost_usd": cost, "structured_output": review,
+            "usage": ["input_tokens": 10, "output_tokens": 900],
+        ])
+    }
+
+    func testReviewFinishedAfterTheAppQuitIsAdoptedOnNextLaunch() async throws {
+        let dashboard = try decodeDashboard()
+        let pullRequest = dashboard.reviews[0]
+        // An earlier launch started the run and quit; Claude finished on its own and wrote its output.
+        let record = RunRecord(kind: .review, pullRequest: pullRequest, startedAt: fixtureNow.addingTimeInterval(-120))
+        try finishedOutput().write(to: journal.begin(record).output)
+
+        let coordinator = makeCoordinator()
+        coordinator.sync(with: dashboard)
+
+        XCTAssertEqual(coordinator.status(for: pullRequest), .current)
+        XCTAssertEqual(coordinator.library.reviews[pullRequest.id]?.pr?.headSha, "sha-2")
+        XCTAssertEqual(coordinator.usage.map(\.usage.costUSD), [0.4], "the paid run is in the usage log")
+        XCTAssertEqual(usage.load().first?.number, 9)
+        XCTAssertTrue(journal.unfinished().isEmpty)
+        XCTAssertTrue(engine.inputs.isEmpty, "nothing was run again")
+    }
+
+    func testRunStillGoingFromAnEarlierLaunchIsShownAndNotStartedTwice() async throws {
+        let dashboard = try decodeDashboard()
+        let pullRequest = dashboard.reviews[0]
+        let record = RunRecord(kind: .review, pullRequest: pullRequest, startedAt: fixtureNow.addingTimeInterval(-60))
+        let sink = journal.begin(record)
+        sink.started(getpid())  // a process that is certainly alive
+
+        let coordinator = makeCoordinator()
+        XCTAssertEqual(coordinator.status(for: pullRequest), .working(.reviewing))
+        coordinator.request(pullRequest)
+        await coordinator.waitUntilIdle()
+        XCTAssertTrue(engine.inputs.isEmpty)
+
+        // It finishes; the next refresh takes the result.
+        try finishedOutput().write(to: sink.output)
+        coordinator.sync(with: dashboard)
+        XCTAssertEqual(coordinator.status(for: pullRequest), .current)
+        XCTAssertEqual(coordinator.usage.count, 1)
+    }
+
+    func testAbandonedRunIsForgottenAndFailedOutputStillCountsItsCost() throws {
+        let dashboard = try decodeDashboard()
+        let stale = RunRecord(kind: .review, pullRequest: dashboard.reviews[0], startedAt: fixtureNow.addingTimeInterval(-7200))
+        _ = journal.begin(stale)
+        let lesson = RunRecord(kind: .lesson, pullRequest: dashboard.mine[0], startedAt: fixtureNow.addingTimeInterval(-300))
+        try Data(#"{"is_error":true,"result":"Budget exceeded","total_cost_usd":3,"usage":{}}"#.utf8)
+            .write(to: journal.begin(lesson).output)
+
+        let coordinator = makeCoordinator()
+
+        XCTAssertEqual(coordinator.status(for: dashboard.reviews[0]), .none)
+        XCTAssertTrue(journal.unfinished().isEmpty)
+        XCTAssertEqual(coordinator.usage.map(\.kind), [.lesson])
+        XCTAssertEqual(coordinator.usage.first?.succeeded, false)
+        XCTAssertEqual(coordinator.usage.first?.usage.costUSD, 3)
+    }
+
+    func testQueuedRequestSurvivesARestart() async throws {
+        let dashboard = try decodeDashboard()
+        // The earlier launch queued two reviews and quit before starting the second.
+        preferences.reviewQueue = ["PR_2", "PR_gone"]
+
+        let coordinator = makeCoordinator()
+        coordinator.sync(with: dashboard)
+        await coordinator.waitUntilIdle()
+
+        XCTAssertEqual(engine.inputs.count, 1)
+        XCTAssertEqual(coordinator.status(for: dashboard.reviews[0]), .current)
+        XCTAssertEqual(preferences.reviewQueue, ["PR_gone"], "started requests leave the stored queue")
+    }
+
+    func testRunInThisLaunchLeavesNothingBehind() async throws {
+        let dashboard = try decodeDashboard()
+        let coordinator = makeCoordinator()
+        engine.duringReview = { [journal] in
+            XCTAssertEqual(journal.unfinished().map(\.record.kind), [.review], "the run is on record while it is going")
+            coordinator.recoverInterruptedRuns()  // a refresh mid-run must not adopt or drop our own run
+        }
+
+        coordinator.request(dashboard.mine[0])
+        await coordinator.waitUntilIdle()
+
+        XCTAssertTrue(journal.unfinished().isEmpty)
+        XCTAssertEqual(coordinator.usage.count, 1)
+        XCTAssertEqual(coordinator.status(for: dashboard.mine[0]), .current)
     }
 
     func testReviewedPullRequestKeepsItsReviewAndIsOnlyEverReReviewed() async throws {
@@ -608,7 +739,8 @@ final class ClaudeCLILiveTests: XCTestCase {
         """
 
         let (review, spent) = try await ClaudeCLI(skill: skill, workDirectory: work)
-            .review(input: input, schema: try skill.schema(), options: RunOptions(maxBudgetUSD: 1))
+            .review(input: input, schema: try skill.schema(), options: RunOptions(maxBudgetUSD: 1),
+                    sink: RunSink(output: work.appendingPathComponent("out.json")) { _ in })
 
         XCTAssertFalse(review.findings.isEmpty, "dividing by len(orders) fails on an empty list")
         XCTAssertEqual(review.findings.first?.path, "stats/orders.go")
