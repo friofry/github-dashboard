@@ -1,0 +1,203 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "summary",
+    "verdict",
+    "findings"
+  ],
+  "properties": {
+    "summary": {
+      "type": "string",
+      "description": "What the pull request does and the overall judgement, in one or two sentences."
+    },
+    "verdict": {
+      "type": "string",
+      "enum": [
+        "approve",
+        "comment",
+        "request_changes"
+      ]
+    },
+    "findings": {
+      "type": "array",
+      "maxItems": 12,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "severity",
+          "title",
+          "path",
+          "line",
+          "problem",
+          "suggestion",
+          "comment",
+          "chain",
+          "impact"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "enum": [
+              "regression",
+              "security",
+              "reliability",
+              "modularity",
+              "structure",
+              "smell"
+            ]
+          },
+          "severity": {
+            "type": "string",
+            "enum": [
+              "high",
+              "medium",
+              "low"
+            ]
+          },
+          "title": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "File path as it appears in the diff."
+          },
+          "line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Line in the new version of the file."
+          },
+          "endLine": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "problem": {
+            "type": "string"
+          },
+          "example": {
+            "type": "string"
+          },
+          "suggestion": {
+            "type": "string"
+          },
+          "comment": {
+            "type": "string",
+            "description": "Ready to post on GitHub, in English."
+          },
+          "chain": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 4,
+            "description": "How the problem comes about, step by step; the last step is the failure.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "title",
+                "detail"
+              ],
+              "properties": {
+                "title": {
+                  "type": "string",
+                  "description": "Three to five words."
+                },
+                "detail": {
+                  "type": "string",
+                  "description": "One short line."
+                }
+              }
+            }
+          },
+          "scenario": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "title",
+              "rows"
+            ],
+            "description": "Optional. One concrete situation as a small table: each thing now and after the fix.",
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "rows": {
+                "type": "array",
+                "minItems": 2,
+                "maxItems": 5,
+                "items": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "item",
+                    "now",
+                    "nowOk",
+                    "after",
+                    "afterOk"
+                  ],
+                  "properties": {
+                    "item": {
+                      "type": "string"
+                    },
+                    "now": {
+                      "type": "string"
+                    },
+                    "nowOk": {
+                      "type": "boolean"
+                    },
+                    "after": {
+                      "type": "string"
+                    },
+                    "afterOk": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "impact": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "harm",
+              "harmNote",
+              "likelihood",
+              "likelihoodNote",
+              "effort",
+              "effortNote"
+            ],
+            "description": "Your estimate on three scales from 1 to 3.",
+            "properties": {
+              "harm": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "harmNote": {
+                "type": "string"
+              },
+              "likelihood": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "likelihoodNote": {
+                "type": "string"
+              },
+              "effort": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 3
+              },
+              "effortNote": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

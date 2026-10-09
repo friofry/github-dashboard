@@ -3,6 +3,7 @@ import SwiftUI
 
 struct SettingsView: View {
     @Environment(DashboardStore.self) private var store
+    @Environment(ReviewCoordinator.self) private var coordinator: ReviewCoordinator?
     @State private var newToken = ""
     @State private var newOwner = ""
 
@@ -53,6 +54,8 @@ struct SettingsView: View {
             .autocorrectionDisabled()
             #endif
             .onChange(of: store.orgs) { Task { await store.refresh() } }
+
+            if let coordinator { ClaudeSettingsSection(coordinator: coordinator) }
 
             Section {
                 TextField("Ignored logins", text: $store.ignoredLogins, prompt: Text("none"))

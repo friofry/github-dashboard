@@ -16,6 +16,7 @@ final class FakeTransport: HTTPTransport, @unchecked Sendable {
     var listsBody = listsJSON
     /// One body per stats page; the last one repeats.
     var statsBodies = [statsJSON]
+    var reviewedBody = #"{"data":{"reviewed":{"issueCount":0,"nodes":[]}}}"#
     private(set) var requests: [URLRequest] = []
     /// Runs once, while the first request is in flight.
     var duringFirstRequest: (@MainActor () async -> Void)?
@@ -29,6 +30,7 @@ final class FakeTransport: HTTPTransport, @unchecked Sendable {
         let status = statuses.isEmpty ? 200 : statuses.removeFirst()
         let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!
         let variables = Self.variables(of: request)
+        if variables["reviewed"] != nil { return (Data(reviewedBody.utf8), response) }
         guard variables["week"] != nil else { return (Data(listsBody.utf8), response) }
         let page = statsRequests.count - 1
         return (Data(statsBodies[min(page, statsBodies.count - 1)].utf8), response)
@@ -71,7 +73,7 @@ let listsJSON = """
       "issueCount": 1,
       "nodes": [{
         "id": "PR_1", "number": 7, "title": "Add cache", "url": "https://github.com/acme/api/pull/7",
-        "isDraft": false, "updatedAt": "2026-10-08T10:00:00Z", "additions": 120, "deletions": 4,
+        "isDraft": false, "updatedAt": "2026-10-08T10:00:00Z", "headRefOid": "sha-1", "additions": 120, "deletions": 4,
         "reviewDecision": "CHANGES_REQUESTED",
         "repository": { "nameWithOwner": "acme/api" },
         "author": { "__typename": "User", "login": "me" },
@@ -95,7 +97,7 @@ let listsJSON = """
       "issueCount": 1,
       "nodes": [{
         "id": "PR_2", "number": 9, "title": "Fix login", "url": "https://evil.example/acme/web/pull/9",
-        "isDraft": true, "updatedAt": "2026-10-06T10:00:00Z", "additions": 5, "deletions": 5,
+        "isDraft": true, "updatedAt": "2026-10-06T10:00:00Z", "headRefOid": "sha-2", "additions": 5, "deletions": 5,
         "reviewDecision": null,
         "repository": { "nameWithOwner": "acme/web" },
         "author": { "__typename": "User", "login": "alice" },
@@ -147,3 +149,23 @@ func statsPage(hasNextPage: Bool) -> String {
 }
 """
 }
+
+/// One pull request I commented on (so GitHub no longer asks me to review it), with a reply from its author,
+/// plus PR_2 again to prove a pull request is never listed twice.
+let reviewedJSON = """
+{ "data": { "reviewed": { "issueCount": 2, "nodes": [
+  { "id": "PR_3", "number": 49, "title": "Parse only changed lists", "url": "https://github.com/acme/sdk/pull/49",
+    "isDraft": false, "updatedAt": "2026-10-08T11:00:00Z", "headRefOid": "sha-9", "additions": 40, "deletions": 2,
+    "reviewDecision": null, "repository": { "nameWithOwner": "acme/sdk" },
+    "author": { "__typename": "User", "login": "carol" }, "commits": { "nodes": [] },
+    "timelineItems": { "nodes": [
+      { "__typename": "IssueComment", "author": { "__typename": "User", "login": "carol" },
+        "createdAt": "2026-10-08T11:00:00Z", "bodyText": "Fixed, thanks", "url": "https://github.com/acme/sdk/pull/49#c1" }
+    ] } },
+  { "id": "PR_2", "number": 9, "title": "Fix login", "url": "https://github.com/acme/web/pull/9",
+    "isDraft": true, "updatedAt": "2026-10-06T10:00:00Z", "headRefOid": "sha-2", "additions": 5, "deletions": 5,
+    "reviewDecision": null, "repository": { "nameWithOwner": "acme/web" },
+    "author": { "__typename": "User", "login": "alice" }, "commits": { "nodes": [] },
+    "timelineItems": { "nodes": [] } }
+] } } }
+"""

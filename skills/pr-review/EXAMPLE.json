@@ -1,0 +1,91 @@
+{
+  "summary": "Adds paging to the user list. The paging maths is right for full pages but crashes on an empty table.",
+  "verdict": "request_changes",
+  "findings": [
+    {
+      "category": "reliability",
+      "severity": "high",
+      "title": "Empty list crashes the pager",
+      "path": "api/users.go",
+      "line": 42,
+      "problem": "`page - 1` is negative when the list is empty, so `items[page - 1]` panics.",
+      "example": "GET /users?page=0 on an empty table returns 500.",
+      "suggestion": "Return early when there are no items.",
+      "comment": "`page - 1` is negative when the list is empty, so `items[page - 1]` panics.\n\nExample: `GET /users?page=0` on an empty table.\n\n```suggestion\nif len(items) == 0 { return nil }\n```",
+      "chain": [
+        {
+          "title": "Table is empty",
+          "detail": "`items` has length 0"
+        },
+        {
+          "title": "Page index goes negative",
+          "detail": "`page - 1` is -1"
+        },
+        {
+          "title": "Handler panics",
+          "detail": "`items[-1]` is out of range, the request returns 500"
+        }
+      ],
+      "scenario": {
+        "title": "GET /users?page=0 on an empty table",
+        "rows": [
+          {
+            "item": "Response status",
+            "now": "500",
+            "nowOk": false,
+            "after": "200",
+            "afterOk": true
+          },
+          {
+            "item": "Response body",
+            "now": "panic trace in the log",
+            "nowOk": false,
+            "after": "empty list",
+            "afterOk": true
+          }
+        ]
+      },
+      "impact": {
+        "harm": 3,
+        "harmNote": "the endpoint crashes",
+        "likelihood": 2,
+        "likelihoodNote": "every new installation starts empty",
+        "effort": 1,
+        "effortNote": "one early return"
+      }
+    },
+    {
+      "category": "smell",
+      "severity": "low",
+      "title": "Page size 50 is repeated in two places",
+      "path": "api/users.go",
+      "line": 17,
+      "endLine": 18,
+      "problem": "The handler and the query both hard-code 50, so changing one silently breaks the other.",
+      "suggestion": "Move it to one `const pageSize = 50`.",
+      "comment": "50 is hard-coded here and in the query below; they have to stay equal. A shared `const pageSize = 50` would keep them in step.",
+      "chain": [
+        {
+          "title": "Two copies of 50",
+          "detail": "one in the handler, one in the query"
+        },
+        {
+          "title": "Someone changes one",
+          "detail": "nothing says the other must follow"
+        },
+        {
+          "title": "Pages overlap or skip rows",
+          "detail": "the handler and the query disagree on page size"
+        }
+      ],
+      "impact": {
+        "harm": 1,
+        "harmNote": "wrong only after a future edit",
+        "likelihood": 1,
+        "likelihoodNote": "needs someone to change the size",
+        "effort": 1,
+        "effortNote": "one constant"
+      }
+    }
+  ]
+}

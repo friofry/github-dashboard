@@ -73,6 +73,8 @@ public struct PullRequest: Decodable, Identifiable, Sendable {
     public let url: URL
     public let isDraft: Bool
     public let updatedAt: Date
+    /// The head commit; a review made at another commit is out of date.
+    public let headRefOid: String
     public let additions: Int
     public let deletions: Int
     public let repository: Repository

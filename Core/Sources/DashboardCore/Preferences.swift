@@ -33,7 +33,7 @@ public protocol PreferencesStore: AnyObject {
     var seen: [String: Date] { get set }
 }
 
-public final class UserDefaultsPreferences: PreferencesStore {
+public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences {
     private let defaults: UserDefaults
     private let config: AppConfig
 
@@ -56,12 +56,60 @@ public final class UserDefaultsPreferences: PreferencesStore {
         get { defaults.dictionary(forKey: "seen") as? [String: Date] ?? [:] }
         set { defaults.set(newValue, forKey: "seen") }
     }
+
+    public var autoReview: Bool {
+        get { defaults.bool(forKey: "autoReview") }
+        set { defaults.set(newValue, forKey: "autoReview") }
+    }
+
+    public var makeLessons: Bool {
+        get { defaults.bool(forKey: "makeLessons") }
+        set { defaults.set(newValue, forKey: "makeLessons") }
+    }
+
+    public var claudeModel: String {
+        get { defaults.string(forKey: "claudeModel") ?? "" }
+        set { defaults.set(newValue, forKey: "claudeModel") }
+    }
+
+    public var maxRunBudget: Double {
+        get { defaults.object(forKey: "maxRunBudget") as? Double ?? 3 }
+        set { defaults.set(newValue, forKey: "maxRunBudget") }
+    }
+
+    public var dailyAutoBudget: Double {
+        get { defaults.object(forKey: "dailyAutoBudget") as? Double ?? 10 }
+        set { defaults.set(newValue, forKey: "dailyAutoBudget") }
+    }
+
+    public var reviewLanguage: String {
+        get { defaults.string(forKey: "reviewLanguage") ?? "" }
+        set { defaults.set(newValue, forKey: "reviewLanguage") }
+    }
+
+    public var reviewBaseline: [String]? {
+        get { defaults.stringArray(forKey: "reviewBaseline") }
+        set { defaults.set(newValue, forKey: "reviewBaseline") }
+    }
+
+    public var reviewDone: [String: Date] {
+        get { defaults.dictionary(forKey: "reviewDone") as? [String: Date] ?? [:] }
+        set { defaults.set(newValue, forKey: "reviewDone") }
+    }
 }
 
-public final class InMemoryPreferences: PreferencesStore {
+public final class InMemoryPreferences: PreferencesStore, ReviewPreferences {
     public var orgs: String
     public var ignoredLogins: String
     public var seen: [String: Date]
+    public var autoReview = false
+    public var makeLessons = false
+    public var claudeModel = ""
+    public var maxRunBudget = 3.0
+    public var dailyAutoBudget = 10.0
+    public var reviewLanguage = ""
+    public var reviewBaseline: [String]?
+    public var reviewDone: [String: Date] = [:]
 
     public init(orgs: String = "", ignoredLogins: String = "", seen: [String: Date] = [:]) {
         self.orgs = orgs

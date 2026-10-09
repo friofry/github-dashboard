@@ -7,6 +7,8 @@ enum Pane: String, CaseIterable, Identifiable {
     case reviews = "Reviews"
     case updates = "Updates"
     case code = "Code this week"
+    case claude = "Claude reviews"
+    case usage = "Claude usage"
 
     var id: String { rawValue }
 
@@ -17,18 +19,22 @@ enum Pane: String, CaseIterable, Identifiable {
         case .reviews: return "eye"
         case .updates: return "bell"
         case .code: return "plusminus"
+        case .claude: return "sparkles"
+        case .usage: return "gauge.with.dots.needle.33percent"
         }
     }
 }
 
 struct RootView: View {
     @Environment(DashboardStore.self) private var store
+    /// Present only where Claude Code can run.
+    @Environment(ReviewCoordinator.self) private var coordinator: ReviewCoordinator?
     @State private var pane: Pane? = .overview
     @State private var showsSettings = false
 
     var body: some View {
         NavigationSplitView {
-            List(Pane.allCases, selection: $pane) { item in
+            List(panes, selection: $pane) { item in
                 Label(item.rawValue, systemImage: item.icon)
                     .badge(badge(for: item))
                     .tag(item)
@@ -68,6 +74,10 @@ struct RootView: View {
         }
     }
 
+    private var panes: [Pane] {
+        Pane.allCases.filter { coordinator != nil || ($0 != .claude && $0 != .usage) }
+    }
+
     private var subtitle: String {
         if store.isLoading { return "Refreshing…" }
         guard let date = store.lastRefresh, let dashboard = store.dashboard else { return "" }
@@ -79,6 +89,7 @@ struct RootView: View {
         case .mine: return store.dashboard?.mineTotal ?? 0
         case .reviews: return store.dashboard?.reviewsTotal ?? 0
         case .updates: return store.newTotal
+        case .claude: return coordinator?.pending.count ?? 0
         default: return 0
         }
     }
@@ -99,6 +110,10 @@ struct RootView: View {
                 case .reviews: PullRequestList(pullRequests: dashboard.reviews, showsAuthor: true)
                 case .updates: UpdatesView(events: store.feed)
                 case .code: CodeView(stats: store.stats, weekStart: dashboard.weekStart)
+                case .claude:
+                    if let coordinator { ClaudeReviewsView(coordinator: coordinator, dashboard: dashboard) }
+                case .usage:
+                    if let coordinator { ClaudeUsageView(coordinator: coordinator, weekStart: dashboard.weekStart) }
                 }
             }
             .refreshable { await store.refresh() }

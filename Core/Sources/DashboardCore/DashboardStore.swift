@@ -9,6 +9,8 @@ public final class DashboardStore {
     static let seenRetention: TimeInterval = 90 * 86_400
 
     public private(set) var dashboard: Dashboard?
+    /// Open pull requests the viewer has reviewed and is no longer asked to review.
+    public private(set) var reviewed: [PullRequest] = []
     /// Nil until the first weekly stats request finishes.
     public private(set) var stats: CodeStats?
     public private(set) var isLoading = false
@@ -28,6 +30,8 @@ public final class DashboardStore {
     private let now: () -> Date
     private var refreshLoop: Task<Void, Never>?
     private var refreshQueued = false
+    /// Called after each successful load of the lists, e.g. to start reviews.
+    public var onLoaded: ((Dashboard, [PullRequest]) -> Void)?
     private var loadedScope: [String]?
 
     public init(service: DashboardService, preferences: PreferencesStore, tokenStore: TokenStore? = nil,
@@ -76,10 +80,15 @@ public final class DashboardStore {
             if scope != loadedScope { stats = nil }
             dashboard = try await service.fetchPullRequests(orgs: scope, now: now())
             loadedScope = scope
+            if let dashboard { onLoaded?(dashboard, reviewed) }
             lastRefresh = now()
             errorMessage = nil
             needsToken = false
-            // Lists are on screen already; the weekly numbers follow, unless a newer request is waiting.
+            // Lists are on screen already; the rest follows, unless a newer request is waiting.
+            guard !refreshQueued else { return }
+            let listed = Set(allPullRequests.map(\.id))
+            reviewed = try await service.fetchReviewed(orgs: scope).filter { !listed.contains($0.id) }
+            if let dashboard { onLoaded?(dashboard, reviewed) }
             guard !refreshQueued else { return }
             stats = try await service.fetchCodeStats(orgs: scope, now: now())
         } catch {
@@ -155,7 +164,7 @@ public final class DashboardStore {
     }
 
     public var feed: [PREvent] {
-        allPullRequests.flatMap(events(for:)).sorted { $0.date > $1.date }
+        followed.flatMap(events(for:)).sorted { $0.date > $1.date }
     }
 
     public var newTotal: Int { feed.filter(isNew).count }
@@ -178,12 +187,18 @@ public final class DashboardStore {
 
     public func markAllRead() {
         let date = now()
-        for pullRequest in allPullRequests { seen[pullRequest.id] = date }
+        for pullRequest in followed { seen[pullRequest.id] = date }
     }
 
     private var allPullRequests: [PullRequest] { (dashboard?.mine ?? []) + (dashboard?.reviews ?? []) }
 
+    /// Everything whose activity matters: replies in pull requests I reviewed count too.
+    private var followed: [PullRequest] { allPullRequests + reviewed }
+
     static func list(_ text: String) -> [String] {
-        text.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+        // People paste "acme/" or "@acme"; only the name itself is a valid owner.
+        text.split(whereSeparator: { $0 == "," || $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "/@")) }
+            .filter { !$0.isEmpty }
     }
 }

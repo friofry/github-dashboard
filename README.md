@@ -43,6 +43,44 @@ Everything is optional. Copy `.env.example` to `.env` and edit:
 `.env` is git-ignored. It only sets the defaults: in Settings you can tick your personal account and each
 organization, or add another one by name.
 
+## Claude reviews (macOS)
+
+With [Claude Code](https://claude.com/claude-code) installed and signed in, the app can review pull requests
+for you. Open **Claude reviews**, press **Review**, and each finding shows:
+
+- a severity (high, medium, low) and a category: regression, security, reliability, modularity, structure, smell
+- a link to the exact line on github.com
+- what is wrong, a failing example and a fix, in plain words, and also as pictures: the steps that lead to the
+  failure, a now-and-after table, three rough scales (harm, how often, cost to fix), the code with the
+  suggested change, and a map of where the finding sits among the changed files
+- a comment shown as GitHub will render it, which you can edit first: **Publish** puts it on that line of the pull request under your account, after you
+  confirm; **Copy** if you would rather paste it yourself
+
+The pane lists review requests and also the open pull requests you have already reviewed, because GitHub
+withdraws a request as soon as you comment. It has three columns: pull requests, the findings of the selected one, and one finding in full; the
+arrow keys move through them. Select several pull requests (shift or command click) and right-click to review
+them all, mark them done or open them. **Done** hides a pull request until there is new activity in it.
+
+Nothing is posted to GitHub unless you press Publish. Publishing needs a token that may write to the
+repository; a read-only token is enough for everything else. In Settings you can also:
+
+- **Review new requests automatically** - requests that arrive after you switch it on, and new commits in
+  pull requests already reviewed. A daily spending limit keeps a burst of requests from running away.
+- **Write a lesson for each review** - a short HTML lesson in `~/learn/<repo>/pr-<number>/` with a diagram of
+  the change, where it sits in the code and what was found. Needs the `teach` skill in Claude Code.
+
+**Claude usage** lists every run with its tokens and cost.
+
+The review follows one fixed form, defined by the [pr-review skill](skills/pr-review/SKILL.md). To use the
+same skill in your own Claude Code sessions (`/pr-review owner/repo#123`):
+
+```bash
+./scripts/install_skill.sh
+```
+
+Pull request text is untrusted, so the review runs with no tools at all: Claude receives the diff and returns
+the form, and the app builds every link itself.
+
 ## How it counts
 
 - **New** means activity by someone else since you last opened that pull request. Before the first open,
@@ -54,11 +92,13 @@ organization, or add another one by name.
 
 ```bash
 swift test --package-path Core   # logic tests, no network
+LIVE_CLAUDE=1 swift test --package-path Core --filter Live   # one real Claude run, spends tokens
 xcodegen                         # regenerate the Xcode project after editing project.yml
 ```
 
 | Path | What lives there |
 |---|---|
-| `Core/` | Swift package: GitHub API, tokens, statistics, app state. No UI. |
+| `Core/` | Swift package: GitHub API, tokens, statistics, reviews, app state. No UI. |
+| `skills/pr-review/` | The review form: instructions, JSON schema, example, lesson brief. |
 | `App/` | SwiftUI views for macOS and iOS. |
 | `project.yml` | Source of the Xcode project. |
