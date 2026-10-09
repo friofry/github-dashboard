@@ -85,6 +85,40 @@ public struct Review: Codable, Sendable, Equatable {
         public let architecture: String
         /// The feature the change goes into, explained very simply.
         public let feature: String
+        /// What a user or caller notices before and after the change.
+        public let before: String?
+        public let after: String?
+        /// The change placed among what uses it and what it relies on.
+        public let map: Map?
+        /// The changed files as a map of the project's layers, in the order calls flow through them.
+        public let layers: [Layer]?
+
+        public struct Node: Codable, Sendable, Equatable {
+            public let name: String
+            public let detail: String
+        }
+
+        public struct Map: Codable, Sendable, Equatable {
+            public let callers: [Node]
+            public let changed: [Node]
+            public let dependencies: [Node]
+        }
+
+        public struct Layer: Codable, Sendable, Equatable {
+            public let name: String
+            /// What the layer does in the project.
+            public let role: String?
+            public let paths: [String]
+            /// What it hands to the next layer in the list; empty for the last.
+            public let next: String?
+
+            public init(name: String, role: String?, paths: [String], next: String?) {
+                self.name = name
+                self.role = role
+                self.paths = paths
+                self.next = next
+            }
+        }
     }
 
     public let summary: String

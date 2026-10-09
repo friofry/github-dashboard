@@ -3,7 +3,51 @@
   "context": {
     "why": "The user list now has thousands of rows, so returning it in one response is slow. The description says the admin page times out.",
     "architecture": "`api/users.go` is the HTTP handler layer: it reads the query string, calls the store in `db/users.go` and writes JSON. Paging is added in the handler and the store query.",
-    "feature": "The admin page shows everyone who has an account. With paging it asks for 50 people at a time and shows Next and Previous buttons."
+    "feature": "The admin page shows everyone who has an account. With paging it asks for 50 people at a time and shows Next and Previous buttons.",
+    "before": "The admin page asks for every user at once and times out once there are a few thousand.",
+    "after": "It asks for 50 users at a time and shows Next and Previous buttons.",
+    "map": {
+      "callers": [
+        {
+          "name": "Admin users page",
+          "detail": "calls GET /users"
+        }
+      ],
+      "changed": [
+        {
+          "name": "api/users.go",
+          "detail": "reads page, returns one page"
+        },
+        {
+          "name": "db/users.go",
+          "detail": "LIMIT and OFFSET in the query"
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "PostgreSQL",
+          "detail": "users table"
+        }
+      ]
+    },
+    "layers": [
+      {
+        "name": "HTTP handlers",
+        "role": "read the request, write JSON",
+        "paths": [
+          "api/users.go"
+        ],
+        "next": "asks the store for one page"
+      },
+      {
+        "name": "Database",
+        "role": "queries PostgreSQL",
+        "paths": [
+          "db/users.go"
+        ],
+        "next": ""
+      }
+    ]
   },
   "verdict": "request_changes",
   "findings": [

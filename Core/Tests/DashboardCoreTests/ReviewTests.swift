@@ -104,6 +104,8 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertEqual(review.findings[0].scenario?.rows.first?.nowOk, false)
         XCTAssertNil(review.findings[1].scenario, "the table is optional")
         XCTAssertFalse(review.context?.why.isEmpty ?? true)
+        XCTAssertEqual(review.context?.map?.changed.count, 2)
+        XCTAssertEqual(review.context?.layers?.flatMap(\.paths), ["api/users.go", "db/users.go"])
     }
 
     func testReviewSavedBeforeContextExistedStillDecodes() throws {
@@ -124,7 +126,7 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertEqual(values("severity", in: finding), Finding.Severity.allCases.map(\.rawValue))
         XCTAssertEqual(values("verdict", in: properties), ["approve", "comment", "request_changes"])
         let context = (properties?["context"] as? [String: Any])?["required"] as? [String]
-        XCTAssertEqual(context, ["why", "architecture", "feature"])
+        XCTAssertEqual(context, ["why", "architecture", "feature", "before", "after", "map", "layers"])
     }
 
     func testLinkPointsAtTheLineInThePullRequest() throws {

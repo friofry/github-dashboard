@@ -103,6 +103,16 @@ two or three plain sentences.
   and do not invent parts of the project you cannot see.
 - `feature` - the feature this change goes into, explained to someone who has never used the product: what a
   user or caller does with it and what they get. No code names unless there is no other way to say it.
+- `before` and `after` - what a user or caller notices before and after this change, one or two sentences each.
+  For a refactor with no visible change, say what gets easier for the next person to change.
+- `map` - the same placement as a small diagram: `callers` (up to three things that use the changed code),
+  `changed` (one to three parts this pull request changes) and `dependencies` (up to three things the changed
+  code relies on), each a `name` as the code spells it and a `detail` of a few words. Leave a list empty rather
+  than guess.
+- `layers` - the changed files as a map of the project's layers, in the order calls or data flow through them,
+  top first ("HTTP handlers", then "Database"; tests and build files last). Each has a `name` of one to three
+  words, a `role` saying what that layer does, the file `paths` exactly as in the diff, and `next`: what it hands
+  to the next layer in the list, empty for the last one. Every changed file belongs to exactly one layer.
 
 `verdict` is `request_changes` when any finding is `high`, `approve` when there are none above `low`,
 otherwise `comment`.
