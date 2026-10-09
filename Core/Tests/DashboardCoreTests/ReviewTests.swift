@@ -482,6 +482,27 @@ final class ReviewCoordinatorTests: XCTestCase {
         XCTAssertEqual(engine.inputs.count, 1)
     }
 
+    func testReviewedPullRequestKeepsItsReviewAndIsOnlyEverReReviewed() async throws {
+        preferences.autoReview = true
+        preferences.reviewBaseline = []
+        let coordinator = makeCoordinator()
+        let dashboard = try decodeDashboard()
+        let reviewed = dashboard.mine  // stands in for a pull request I commented on
+
+        // Never reviewed by Claude: listing it as "reviewed by me" must not start a run by itself.
+        coordinator.sync(with: dashboard, reviewed: reviewed)
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(engine.inputs.count, 1, "only the genuine review request ran")
+        XCTAssertEqual(coordinator.status(for: reviewed[0]), .none)
+
+        // Its review on disk is still picked up, so the findings do not vanish with the review request.
+        coordinator.request(reviewed[0])
+        await coordinator.waitUntilIdle()
+        let fresh = makeCoordinator()
+        fresh.sync(with: dashboard, reviewed: reviewed)
+        XCTAssertEqual(fresh.status(for: reviewed[0]), .current)
+    }
+
     func testFailedReviewIsShownCountedAndNotRetriedAutomatically() async throws {
         var spent = ClaudeUsage()
         spent.costUSD = 0.5

@@ -31,6 +31,9 @@ extension URLSession: HTTPTransport {
 public protocol DashboardService: Sendable {
     /// - Parameter orgs: limits every list to these owners (organizations or users); empty means all repositories.
     func fetchPullRequests(orgs: [String], now: Date) async throws -> Dashboard
+    /// Open pull requests the viewer has already reviewed. GitHub drops the review request as soon as a review
+    /// or a single review comment is submitted, so without this list a pull request vanishes mid-conversation.
+    func fetchReviewed(orgs: [String]) async throws -> [PullRequest]
     /// Slower than the lists on busy accounts, so it is loaded separately.
     func fetchCodeStats(orgs: [String], now: Date) async throws -> CodeStats
 }
@@ -69,6 +72,13 @@ public struct GitHubService: DashboardService, PullRequestDiffSource, CommentPub
             reviews: payload.reviews.nodes.compactMap { $0 },
             reviewsTotal: payload.reviews.issueCount
         )
+    }
+
+    public func fetchReviewed(orgs: [String]) async throws -> [PullRequest] {
+        let token = try await requireToken()
+        let search = "is:pr is:open reviewed-by:@me -author:@me archived:false sort:updated-desc\(Self.scope(orgs))"
+        let payload: ReviewedPayload = try await post(Self.reviewedQuery, token: token, variables: ["reviewed": search])
+        return payload.reviewed.nodes.compactMap { $0 }
     }
 
     public func fetchCodeStats(orgs: [String], now: Date) async throws -> CodeStats {
@@ -228,6 +238,10 @@ private struct ListsPayload: Decodable {
     let reviews: Search<PullRequest>
 }
 
+private struct ReviewedPayload: Decodable {
+    let reviewed: Search<PullRequest>
+}
+
 private struct StatsPayload: Decodable {
     let viewer: Actor
     let week: Search<WeekPullRequest>
@@ -247,6 +261,16 @@ extension GitHubService {
       mine: search(query: $mine, type: ISSUE, first: 50) { issueCount nodes { ...PR } }
       reviews: search(query: $reviews, type: ISSUE, first: 50) { issueCount nodes { ...PR } }
     }
+    """ + pullRequestFragment
+
+    fileprivate static let reviewedQuery = """
+    query($reviewed: String!) {
+      reviewed: search(query: $reviewed, type: ISSUE, first: 30) { issueCount nodes { ...PR } }
+    }
+    """ + pullRequestFragment
+
+    fileprivate static let pullRequestFragment = """
+
     fragment PR on PullRequest {
       id number title url isDraft updatedAt headRefOid additions deletions reviewDecision
       repository { nameWithOwner }

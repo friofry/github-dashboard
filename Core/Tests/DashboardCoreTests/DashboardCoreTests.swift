@@ -207,6 +207,26 @@ final class DashboardStoreTests: XCTestCase {
         XCTAssertTrue((transport.lastVariables["week"] as? String)?.hasSuffix(" org:me org:ACME") == true)
     }
 
+    func testReviewedPullRequestsStayFollowedAfterGitHubDropsTheRequest() async {
+        transport.reviewedBody = reviewedJSON
+        let store = makeStore()
+        await store.refresh()
+
+        XCTAssertEqual(store.reviewed.map(\.id), ["PR_3"], "PR_2 is already listed as a review request")
+        XCTAssertEqual(store.feed.first?.actor, "carol")
+        XCTAssertEqual(store.feed.first?.text, "Fixed, thanks")
+        let query = transport.requests.compactMap { request -> String? in
+            guard let body = request.httpBody,
+                  let json = try? JSONSerialization.jsonObject(with: body) as? [String: Any]
+            else { return nil }
+            return (json["variables"] as? [String: Any])?["reviewed"] as? String
+        }.first
+        XCTAssertTrue(query?.contains("reviewed-by:@me -author:@me") == true)
+
+        store.markAllRead()
+        XCTAssertEqual(store.newTotal, 0)
+    }
+
     func testScopeChangeDuringALoadIsNotLost() async {
         let store = makeStore()
         transport.duringFirstRequest = {

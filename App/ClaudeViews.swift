@@ -12,7 +12,7 @@ struct ClaudeReviewsView: View {
     @State private var selectedPullRequest: String?
     @State private var selectedFinding: String?
 
-    private var all: [PullRequest] { dashboard.reviews + dashboard.mine }
+    private var all: [PullRequest] { dashboard.reviews + store.reviewed + dashboard.mine }
     private var current: PullRequest? { all.first { $0.id == selectedPullRequest } }
 
     private func visible(_ pullRequests: [PullRequest]) -> [PullRequest] {
@@ -35,7 +35,7 @@ struct ClaudeReviewsView: View {
             }
         }
         .onAppear {
-            if current == nil { selectedPullRequest = (visible(dashboard.reviews) + visible(dashboard.mine)).first?.id }
+            if current == nil { selectedPullRequest = visible(all).first?.id }
             selectFirstFinding()
         }
         .onChange(of: selectedPullRequest) { selectFirstFinding() }
@@ -53,6 +53,7 @@ struct ClaudeReviewsView: View {
         return VStack(spacing: 0) {
             List(selection: $selectedPullRequest) {
                 section("Awaiting my review", visible(dashboard.reviews))
+                section("Reviewed by me", visible(store.reviewed))
                 section("My pull requests", visible(dashboard.mine))
             }
             if !coordinator.pending.isEmpty || doneCount > 0 {

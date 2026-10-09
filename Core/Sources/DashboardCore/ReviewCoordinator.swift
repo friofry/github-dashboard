@@ -146,9 +146,9 @@ public final class ReviewCoordinator {
     // MARK: Actions
 
     /// Call after every dashboard refresh: picks up reviews from disk and starts the automatic ones.
-    public func sync(with dashboard: Dashboard) {
+    public func sync(with dashboard: Dashboard, reviewed: [PullRequest] = []) {
         reviewRequests = dashboard.reviews
-        for pullRequest in dashboard.mine + dashboard.reviews {
+        for pullRequest in dashboard.mine + dashboard.reviews + reviewed {
             let repo = pullRequest.repository.nameWithOwner
             reviews[pullRequest.id] = workspace.loadReview(repo: repo, number: pullRequest.number)
             lessons[pullRequest.id] = workspace.latestLesson(repo: repo, number: pullRequest.number)
@@ -160,10 +160,12 @@ public final class ReviewCoordinator {
             preferences.reviewBaseline = dashboard.reviews.map(\.id)
             return
         }
-        for pullRequest in dashboard.reviews {
+        let requested = Set(dashboard.reviews.map(\.id))
+        for pullRequest in dashboard.reviews + reviewed {
             let isNew: Bool
             switch status(for: pullRequest) {
-            case .none: isNew = !baseline.contains(pullRequest.id)
+            // A pull request I already reviewed myself is only re-reviewed, never reviewed from scratch.
+            case .none: isNew = requested.contains(pullRequest.id) && !baseline.contains(pullRequest.id)
             case .outdated: isNew = true
             case .working, .current, .failed: isNew = false
             }

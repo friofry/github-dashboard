@@ -51,7 +51,7 @@ final class AppModel {
         let service = GitHubService(tokens: TokenChain(providers))
         store = DashboardStore(service: service, preferences: preferences, tokenStore: keychain)
         reviews = Self.makeReviews(service: service, preferences: preferences, config: config)
-        store.onLoaded = { [reviews] dashboard in reviews?.sync(with: dashboard) }
+        store.onLoaded = { [reviews] dashboard, reviewed in reviews?.sync(with: dashboard, reviewed: reviewed) }
         store.startAutoRefresh()
     }
 
