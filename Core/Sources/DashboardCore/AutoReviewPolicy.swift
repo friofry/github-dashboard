@@ -7,6 +7,11 @@ public enum AutoReviewPolicy {
         public var baseline: [String]
         /// Pull request ids to review now.
         public var start: [String]
+
+        public init(baseline: [String], start: [String]) {
+            self.baseline = baseline
+            self.start = start
+        }
     }
 
     /// - Parameters:
