@@ -28,7 +28,11 @@ struct Connection<Node: Decodable & Sendable>: Decodable, Sendable {
 }
 
 struct Commit: Decodable, Sendable {
-    struct Rollup: Decodable, Sendable { let state: String }
+    struct Rollup: Decodable, Sendable {
+        let state: String
+        /// Older saved data has none.
+        let contexts: Connection<CheckContext>?
+    }
     struct Parents: Decodable, Sendable { let totalCount: Int }
 
     let oid: String?
@@ -94,11 +98,60 @@ public struct PullRequest: Decodable, Identifiable, Sendable {
         }
     }
 
+    /// Every status and check run on the head commit.
+    public var checks: [CheckContext] {
+        commits.nodes.compactMap({ $0 }).last?.commit.statusCheckRollup?.contexts?.nodes.compactMap { $0 } ?? []
+    }
+
     public var decision: ReviewDecision? {
         switch reviewDecision {
         case "APPROVED": return .approved
         case "CHANGES_REQUESTED": return .changesRequested
         default: return nil
+        }
+    }
+}
+
+/// One line of a commit's checks: a commit status (what Jenkins posts) or a GitHub check run.
+public struct CheckContext: Decodable, Hashable, Sendable {
+    public let name: String
+    /// Nil while a check run is queued or in progress, and for states this app does not know.
+    public let state: PullRequest.CIState?
+    /// Where the check's details live, e.g. the Jenkins build.
+    public let url: URL?
+
+    public init(name: String, state: PullRequest.CIState?, url: URL?) {
+        self.name = name
+        self.state = state
+        self.url = url
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case typename = "__typename"
+        case context, state, targetUrl
+        case name, status, conclusion, detailsUrl
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        if try container.decodeIfPresent(String.self, forKey: .typename) == "CheckRun" {
+            name = try container.decodeIfPresent(String.self, forKey: .name) ?? ""
+            url = try? container.decodeIfPresent(URL.self, forKey: .detailsUrl)
+            switch try container.decodeIfPresent(String.self, forKey: .conclusion) {
+            case "SUCCESS", "NEUTRAL", "SKIPPED": state = .success
+            case "FAILURE", "TIMED_OUT", "CANCELLED", "STARTUP_FAILURE", "ACTION_REQUIRED": state = .failure
+            case nil: state = .pending
+            default: state = nil
+            }
+        } else {
+            name = try container.decodeIfPresent(String.self, forKey: .context) ?? ""
+            url = try? container.decodeIfPresent(URL.self, forKey: .targetUrl)
+            switch try container.decodeIfPresent(String.self, forKey: .state) {
+            case "SUCCESS": state = .success
+            case "FAILURE", "ERROR": state = .failure
+            case "PENDING", "EXPECTED": state = .pending
+            default: state = nil
+            }
         }
     }
 }

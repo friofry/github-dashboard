@@ -275,7 +275,22 @@ extension GitHubService {
       id number title url isDraft updatedAt headRefOid additions deletions reviewDecision bodyText
       repository { nameWithOwner }
       author { __typename login }
-      commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
+      commits(last: 1) {
+        nodes {
+          commit {
+            statusCheckRollup {
+              state
+              contexts(first: 50) {
+                nodes {
+                  __typename
+                  ... on StatusContext { context state targetUrl }
+                  ... on CheckRun { name conclusion detailsUrl }
+                }
+              }
+            }
+          }
+        }
+      }
       timelineItems(last: 8, itemTypes: [ISSUE_COMMENT, PULL_REQUEST_REVIEW, PULL_REQUEST_COMMIT]) {
         nodes {
           __typename
