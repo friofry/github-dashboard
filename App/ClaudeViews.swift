@@ -6,14 +6,18 @@ import SwiftUI
 /// Three columns, like a mail client: pull requests, the findings of the selected one, one finding in full.
 struct ClaudeReviewsView: View {
     @Environment(DashboardStore.self) private var store
+    @Environment(\.openURL) private var openURL
     let coordinator: ReviewCoordinator
     let dashboard: Dashboard
     @State private var showsDone = false
-    @State private var selectedPullRequest: String?
+    /// Several pull requests can be selected at once (shift or command click) and acted on from the context menu.
+    @State private var selection: Set<String> = []
     @State private var selectedFinding: String?
 
     private var all: [PullRequest] { dashboard.reviews + store.reviewed + dashboard.mine }
-    private var current: PullRequest? { all.first { $0.id == selectedPullRequest } }
+    /// The one pull request whose findings are shown; nil while none or several are selected.
+    private var current: PullRequest? { selection.count == 1 ? all.first { selection.contains($0.id) } : nil }
+    private var selected: [PullRequest] { all.filter { selection.contains($0.id) } }
 
     private func visible(_ pullRequests: [PullRequest]) -> [PullRequest] {
         store.sorted(pullRequests.filter { showsDone || !coordinator.isDone($0) })
@@ -28,6 +32,14 @@ struct ClaudeReviewsView: View {
                     .frame(width: 280)
                 Divider()
                 detail(for: current).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if selection.count > 1 {
+                ContentUnavailableView {
+                    Label("\(selection.count) pull requests selected", systemImage: "square.stack")
+                } actions: {
+                    Button(reviewTitle(for: selected)) { selected.forEach(coordinator.request) }
+                    Button("Mark as done") { setDone(selected, true) }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ContentUnavailableView("Select a pull request", systemImage: "sparkles",
                                        description: Text("Its findings appear here."))
@@ -35,10 +47,10 @@ struct ClaudeReviewsView: View {
             }
         }
         .onAppear {
-            if current == nil { selectedPullRequest = visible(all).first?.id }
+            if selection.isEmpty, let first = visible(all).first { selection = [first.id] }
             selectFirstFinding()
         }
-        .onChange(of: selectedPullRequest) { selectFirstFinding() }
+        .onChange(of: selection) { selectFirstFinding() }
         // A review that finishes while its pull request is open should show its first finding straight away.
         .onChange(of: current.flatMap { coordinator.reviews[$0.id]?.pr?.reviewedAt }) { selectFirstFinding() }
     }
@@ -51,10 +63,26 @@ struct ClaudeReviewsView: View {
     private var pullRequestColumn: some View {
         let doneCount = all.filter(coordinator.isDone).count
         return VStack(spacing: 0) {
-            List(selection: $selectedPullRequest) {
+            List(selection: $selection) {
                 section("Awaiting my review", visible(dashboard.reviews))
                 section("Reviewed by me", visible(store.reviewed))
                 section("My pull requests", visible(dashboard.mine))
+            }
+            .contextMenu(forSelectionType: String.self) { ids in
+                let targets = all.filter { ids.contains($0.id) }
+                if !targets.isEmpty {
+                    Button(reviewTitle(for: targets), systemImage: "sparkles") { targets.forEach(coordinator.request) }
+                    if targets.allSatisfy(coordinator.isDone) {
+                        Button("Mark as not done", systemImage: "arrow.uturn.backward.circle") { setDone(targets, false) }
+                    } else {
+                        Button("Mark as done", systemImage: "checkmark.circle") { setDone(targets, true) }
+                    }
+                    Divider()
+                    Button(targets.count == 1 ? "Open on GitHub" : "Open \(targets.count) on GitHub",
+                           systemImage: "arrow.up.right.square") {
+                        for pullRequest in targets { openURL(pullRequest.url) }
+                    }
+                }
             }
             if !coordinator.pending.isEmpty || doneCount > 0 {
                 Divider()
@@ -75,6 +103,16 @@ struct ClaudeReviewsView: View {
                 .padding(8)
             }
         }
+    }
+
+    private func reviewTitle(for pullRequests: [PullRequest]) -> String {
+        let verb = pullRequests.contains { coordinator.reviews[$0.id] == nil } ? "Review" : "Re-review"
+        return pullRequests.count == 1 ? "\(verb) with Claude" : "\(verb) \(pullRequests.count) with Claude"
+    }
+
+    private func setDone(_ pullRequests: [PullRequest], _ isDone: Bool) {
+        withAnimation { pullRequests.forEach { coordinator.setDone($0, isDone) } }
+        if isDone, !showsDone { selection.subtract(pullRequests.map(\.id)) }
     }
 
     @ViewBuilder private func section(_ title: String, _ pullRequests: [PullRequest]) -> some View {

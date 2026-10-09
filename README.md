@@ -56,7 +56,8 @@ for you. Open **Claude reviews**, press **Review**, and each finding shows:
 
 The pane lists review requests and also the open pull requests you have already reviewed, because GitHub
 withdraws a request as soon as you comment. It has three columns: pull requests, the findings of the selected one, and one finding in full; the
-arrow keys move through them. **Done** hides a pull request until there is new activity in it.
+arrow keys move through them. Select several pull requests (shift or command click) and right-click to review
+them all, mark them done or open them. **Done** hides a pull request until there is new activity in it.
 
 Nothing is posted to GitHub unless you press Publish. Publishing needs a token that may write to the
 repository; a read-only token is enough for everything else. In Settings you can also:
