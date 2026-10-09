@@ -180,6 +180,8 @@ struct FindingColumn: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            PullRequestChips(pullRequest: pullRequest)
+                .padding([.horizontal, .top], 10)
             if let review = coordinator.library.reviews[pullRequest.id] {
                 if let context = review.context {
                     ContextStrip(context: context, isSelected: selection == Self.contextID) { selection = Self.contextID }
@@ -244,6 +246,54 @@ struct FindingColumn: View {
                     .help("Hide until there is new activity in this pull request")
             }
         }
+    }
+}
+
+/// GitHub-style labels for who opened the pull request and which branch goes into which.
+struct PullRequestChips: View {
+    @Environment(\.openURL) private var openURL
+    let pullRequest: PullRequest
+
+    var body: some View {
+        ChipFlow(spacing: 6) {
+            if let author = pullRequest.author {
+                Button {
+                    if let url = Self.profile(author.login) { openURL(url) }
+                } label: {
+                    Label(author.login, systemImage: author.isBot ? "gearshape" : "person.crop.circle")
+                }
+                .buttonStyle(.plain)
+                .modifier(Chip(tint: .secondary))
+                .help("Open @\(author.login) on GitHub")
+            }
+            if let head = pullRequest.headRefName {
+                Text(head).modifier(Chip(tint: .blue)).help("Branch with the changes: \(head)")
+            }
+            if let base = pullRequest.baseRefName {
+                Image(systemName: "arrow.right").font(.caption2).foregroundStyle(.secondary).padding(.top, 3)
+                Text(base).modifier(Chip(tint: .blue)).help("Merges into \(base)")
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// Built here from the login alone, so it can only point at github.com.
+    static func profile(_ login: String) -> URL? {
+        login.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed).flatMap { URL(string: "https://github.com/\($0)") }
+    }
+}
+
+/// The rounded, lightly tinted label GitHub uses for branch names and authors.
+struct Chip: ViewModifier {
+    let tint: Color
+
+    func body(content: Content) -> some View {
+        content
+            .font(.caption.monospaced())
+            .lineLimit(1).truncationMode(.middle)
+            .foregroundStyle(tint == .secondary ? Color.primary : tint)
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 6))
     }
 }
 
@@ -486,7 +536,7 @@ struct ChipFlow: Layout {
         var rows: [[(index: Int, size: CGSize)]] = [[]]
         var x: CGFloat = 0
         for index in subviews.indices {
-            let size = subviews[index].sizeThatFits(.unspecified)
+            let size = subviews[index].sizeThatFits(ProposedViewSize(width: width.isFinite ? width : nil, height: nil))
             if x > 0, x + size.width > width {
                 rows.append([])
                 x = 0

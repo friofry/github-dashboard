@@ -273,6 +273,7 @@ extension GitHubService {
 
     fragment PR on PullRequest {
       id number title url isDraft updatedAt headRefOid additions deletions reviewDecision bodyText
+      headRefName baseRefName
       repository { nameWithOwner }
       author { __typename login }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }
