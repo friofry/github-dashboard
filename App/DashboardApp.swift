@@ -12,22 +12,29 @@ struct DashboardApp: App {
             RootView()
                 .environment(store)
                 .environment(model.reviews)
+                .environment(\.buildCommit, model.config.commit)
                 .frame(minWidth: 1040, minHeight: 560)
         }
 
         MenuBarExtra {
             MenuBarContent().environment(store).environment(model.reviews)
         } label: {
-            Image(systemName: store.errorMessage == nil ? "arrow.triangle.pull" : "exclamationmark.triangle")
+            // Failed or held-back Claude reviews show here too, so they are seen without opening the window.
+            Image(systemName: store.errorMessage == nil && (model.reviews?.alerts ?? []).isEmpty
+                ? "arrow.triangle.pull" : "exclamationmark.triangle")
             if store.newTotal > 0 { Text("\(store.newTotal)") }
         }
 
         Settings {
-            SettingsView().environment(store).environment(model.reviews).frame(width: 480)
+            SettingsView()
+                .environment(store)
+                .environment(model.reviews)
+                .environment(\.buildCommit, model.config.commit)
+                .frame(width: 480)
         }
         #else
         WindowGroup {
-            RootView().environment(store)
+            RootView().environment(store).environment(\.buildCommit, model.config.commit)
         }
         #endif
     }
@@ -36,12 +43,14 @@ struct DashboardApp: App {
 /// The only place where live dependencies are wired together.
 @MainActor
 final class AppModel {
+    let config: AppConfig
     let store: DashboardStore
     /// Nil where Claude Code cannot run (iOS).
     let reviews: ReviewCoordinator?
 
     init() {
         let config = AppConfig()
+        self.config = config
         let preferences = UserDefaultsPreferences(config: config)
         let keychain = KeychainTokenStore(service: config.bundleIdentifier)
         var providers: [TokenProvider] = [keychain, StaticTokenProvider(config.environmentToken)]
@@ -66,7 +75,8 @@ final class AppModel {
         return ReviewCoordinator(
             source: service,
             publisher: service,
-            engine: ClaudeCLI(skill: skill, workDirectory: home.appendingPathComponent("claude")),
+            engine: ClaudeCLI(skill: skill, workDirectory: home.appendingPathComponent("claude"),
+                              environment: config.environment),
             skill: skill,
             workspace: ReviewWorkspace(root: FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("learn")),
             journal: RunJournal(directory: home.appendingPathComponent("runs")),
@@ -76,6 +86,18 @@ final class AppModel {
         #else
         return nil
         #endif
+    }
+}
+
+private struct BuildCommitKey: EnvironmentKey {
+    static let defaultValue = ""
+}
+
+extension EnvironmentValues {
+    /// The commit the running app was built from; empty when it was built without the run scripts.
+    var buildCommit: String {
+        get { self[BuildCommitKey.self] }
+        set { self[BuildCommitKey.self] = newValue }
     }
 }
 
@@ -102,6 +124,10 @@ struct MenuBarContent: View {
             Text(error)
             Divider()
         }
+        if let alerts = coordinator?.alerts, !alerts.isEmpty {
+            ForEach(alerts, id: \.self) { Text($0) }
+            Divider()
+        }
         Button("Open GitHub Dashboard") {
             openWindow(id: "main")
             NSApp.activate(ignoringOtherApps: true)
@@ -109,6 +135,21 @@ struct MenuBarContent: View {
         Button("Refresh") { Task { await store.refresh() } }
         Divider()
         Button("Quit") { NSApp.terminate(nil) }
+    }
+}
+
+extension ReviewCoordinator {
+    /// Problems with Claude reviews worth seeing from the menu bar.
+    var alerts: [String] {
+        var alerts: [String] = []
+        if failedCount > 0 {
+            alerts.append(failedCount == 1 ? "1 Claude review failed" : "\(failedCount) Claude reviews failed")
+        }
+        if !heldByBudget.isEmpty {
+            let count = heldByBudget.count
+            alerts.append("Daily Claude limit reached: \(count) automatic review\(count == 1 ? "" : "s") waiting")
+        }
+        return alerts
     }
 }
 #endif

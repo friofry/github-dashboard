@@ -33,6 +33,7 @@ targets:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
+        DashboardCommit: $(DASHBOARD_COMMIT)
         DashboardOrgs: $(DASHBOARD_ORGS)
         DashboardIgnoredLogins: $(DASHBOARD_IGNORED_LOGINS)
     settings:
@@ -42,6 +43,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: $(DASHBOARD_BUNDLE_ID)
         # Overridden from .env by the run scripts.
         DASHBOARD_BUNDLE_ID: dev.example.github-dashboard
+        DASHBOARD_COMMIT: ""
         DASHBOARD_ORGS: ""
         DASHBOARD_IGNORED_LOGINS: ""
         DEVELOPMENT_TEAM: ""

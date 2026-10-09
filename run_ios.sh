@@ -13,7 +13,7 @@ if [[ -z "$UDID" ]]; then
 fi
 
 build Debug "id=$UDID"
-APP="$DERIVED/Build/Products/Debug-iphonesimulator/$APP_NAME"
+APP="$(built_app Debug-iphonesimulator)"
 
 xcrun simctl bootstatus "$UDID" -b >/dev/null
 open -a Simulator
@@ -27,5 +27,13 @@ if [[ -z "$TOKEN" ]] && command -v gh >/dev/null; then
     [[ -n "$TOKEN" ]] && echo "Using the GitHub CLI token for this launch."
 fi
 
-SIMCTL_CHILD_GH_TOKEN="$TOKEN" xcrun simctl launch --terminate-running-process "$UDID" "$(bundle_id "$APP/Info.plist")" >/dev/null
-echo "Running in simulator $UDID"
+# Prints "<bundle id>: <pid>". Simulator apps are ordinary processes on this Mac, so the pid can be checked here.
+LAUNCHED="$(SIMCTL_CHILD_GH_TOKEN="$TOKEN" xcrun simctl launch --terminate-running-process "$UDID" \
+    "$(plist_value CFBundleIdentifier "$APP/Info.plist")")"
+PID="${LAUNCHED##*: }"
+sleep 2
+if ! kill -0 "$PID" 2>/dev/null; then
+    echo "The app quit right after launch in simulator $UDID." >&2
+    exit 1
+fi
+echo "Running $(plist_value DashboardCommit "$APP/Info.plist") in simulator $UDID"

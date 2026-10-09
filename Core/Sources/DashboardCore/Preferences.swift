@@ -6,22 +6,30 @@ public struct AppConfig: Sendable {
     public let defaultOrgs: String
     public let defaultIgnoredLogins: String
     public let environmentToken: String?
+    /// The commit the app was built from, with "-dirty" when the working copy had changes; empty if unknown.
+    public let commit: String
+    /// The process environment, for child processes the app starts.
+    public let environment: [String: String]
 
     public init(bundleIdentifier: String, defaultOrgs: String = "", defaultIgnoredLogins: String = "",
-                environmentToken: String? = nil) {
+                environmentToken: String? = nil, commit: String = "", environment: [String: String] = [:]) {
         self.bundleIdentifier = bundleIdentifier
         self.defaultOrgs = defaultOrgs
         self.defaultIgnoredLogins = defaultIgnoredLogins
         self.environmentToken = environmentToken
+        self.commit = commit
+        self.environment = environment
     }
 
-    /// `DashboardOrgs` and `DashboardIgnoredLogins` are written into Info.plist from `.env` by the run scripts.
+    /// `DashboardOrgs`, `DashboardIgnoredLogins` and `DashboardCommit` are written into Info.plist by the run scripts.
     public init(bundle: Bundle = .main, environment: [String: String] = ProcessInfo.processInfo.environment) {
         self.init(
             bundleIdentifier: bundle.bundleIdentifier ?? "github-dashboard",
             defaultOrgs: bundle.object(forInfoDictionaryKey: "DashboardOrgs") as? String ?? "",
             defaultIgnoredLogins: bundle.object(forInfoDictionaryKey: "DashboardIgnoredLogins") as? String ?? "",
-            environmentToken: environment["GH_TOKEN"] ?? environment["GITHUB_TOKEN"]
+            environmentToken: environment["GH_TOKEN"] ?? environment["GITHUB_TOKEN"],
+            commit: bundle.object(forInfoDictionaryKey: "DashboardCommit") as? String ?? "",
+            environment: environment
         )
     }
 }

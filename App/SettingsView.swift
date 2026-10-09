@@ -4,6 +4,7 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(DashboardStore.self) private var store
     @Environment(ReviewCoordinator.self) private var coordinator: ReviewCoordinator?
+    @Environment(\.buildCommit) private var buildCommit
     @State private var newToken = ""
     @State private var newOwner = ""
 
@@ -68,6 +69,12 @@ struct SettingsView: View {
             .textInputAutocapitalization(.never)
             .autocorrectionDisabled()
             #endif
+
+            if !buildCommit.isEmpty {
+                Section {
+                    LabeledContent("Built from", value: buildCommit)
+                }
+            }
         }
         .formStyle(.grouped)
     }

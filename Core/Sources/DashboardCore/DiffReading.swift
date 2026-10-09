@@ -7,6 +7,12 @@ public struct CodeLine: Equatable, Sendable {
     public let number: Int?
     public let kind: Kind
     public let text: String
+
+    public init(number: Int?, kind: Kind, text: String) {
+        self.number = number
+        self.kind = kind
+        self.text = text
+    }
 }
 
 /// One file of a pull request, read back from the annotated diff the app saved next to the review.

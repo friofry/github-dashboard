@@ -1,4 +1,4 @@
-@testable import DashboardCore
+import DashboardCore
 import XCTest
 
 private let skillDirectory = URL(fileURLWithPath: #filePath)
@@ -166,6 +166,21 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertEqual(workspace.directory(repo: "acme/../../etc", number: 1).path, "/tmp/learn/etc/pr-1")
         XCTAssertEqual(workspace.directory(repo: "acme/..", number: 1).path, "/tmp/learn/_/pr-1")
     }
+
+    func testReviewOfAnotherRepositoryWithTheSameNameIsNotShown() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("learn-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = ReviewWorkspace(root: root)
+        var review = try XCTUnwrap(JSONSerialization.jsonObject(
+            with: Data(contentsOf: skillDirectory.appendingPathComponent("EXAMPLE.json"))) as? [String: Any])
+        review["pr"] = ["repo": "other/api", "number": 7, "headSha": "abc"]
+        let directory = workspace.directory(repo: "acme/api", number: 7)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try JSONSerialization.data(withJSONObject: review).write(to: directory.appendingPathComponent("review.json"))
+
+        XCTAssertNil(workspace.loadReview(repo: "acme/api", number: 7), "both live in api/pr-7")
+        XCTAssertEqual(workspace.loadReview(repo: "Other/api", number: 7)?.pr?.headSha, "abc")
+    }
 }
 
 final class CommentPublishingTests: XCTestCase {
@@ -321,7 +336,7 @@ final class UsageTests: XCTestCase {
         let recent = UsageEntry(date: fixtureNow, repo: "acme/api", number: 2, kind: .lesson, usage: spent, succeeded: false)
 
         let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("usage.json")
-        let store = FileUsageStore(file: file)
+        let store = FileUsageStore(file: file, now: { fixtureNow })
         store.append(old)
         store.append(recent)
 
@@ -330,6 +345,21 @@ final class UsageTests: XCTestCase {
         let week = UsageTotals(store.load(), since: fixtureNow.addingTimeInterval(-86_400))
         XCTAssertEqual(week.runs, 1)
         XCTAssertEqual(week.costUSD, 0.25)
+    }
+
+    func testFileStoreForgetsRunsOlderThanAYear() throws {
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathComponent("usage.json")
+        defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+        let entry = { (daysAgo: Double, number: Int) in
+            UsageEntry(date: fixtureNow.addingTimeInterval(-daysAgo * 86_400), repo: "acme/api", number: number,
+                       kind: .review, usage: ClaudeUsage(), succeeded: true)
+        }
+        let store = FileUsageStore(file: file, now: { fixtureNow })
+        store.append(entry(400, 1))
+        store.append(entry(300, 2))
+        store.append(entry(0, 3))
+
+        XCTAssertEqual(store.load().map(\.number), [2, 3])
     }
 }
 
@@ -573,10 +603,35 @@ final class ReviewCoordinatorTests: XCTestCase {
         await coordinator.waitUntilIdle()
         XCTAssertTrue(engine.inputs.isEmpty, "today's spending is already past the default 10 USD")
         XCTAssertEqual(coordinator.status(for: dashboard.reviews[0]), .none)
+        XCTAssertEqual(coordinator.heldByBudget, ["PR_2"])
 
         coordinator.request(dashboard.reviews[0])
         await coordinator.waitUntilIdle()
         XCTAssertEqual(engine.inputs.count, 1)
+        XCTAssertTrue(coordinator.heldByBudget.isEmpty)
+    }
+
+    func testReviewsHeldByTheDailyBudgetRunTheNextDay() async throws {
+        var spent = ClaudeUsage()
+        spent.costUSD = 12
+        usage.append(UsageEntry(date: fixtureNow, repo: "acme/api", number: 1, kind: .review, usage: spent, succeeded: true))
+        preferences.autoReview = true
+        preferences.reviewBaseline = []
+        var clock = fixtureNow
+        let coordinator = ReviewCoordinator(source: FakeDiffSource(), engine: engine, skill: ReviewSkill(directory: skillDirectory),
+                                            workspace: ReviewWorkspace(root: root), journal: journal, usageStore: usage,
+                                            preferences: preferences, now: { clock })
+        let dashboard = try decodeDashboard()
+
+        coordinator.sync(with: dashboard)
+        await coordinator.waitUntilIdle()
+        XCTAssertTrue(engine.inputs.isEmpty)
+
+        clock = fixtureNow.addingTimeInterval(86_400)
+        coordinator.sync(with: dashboard)
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(engine.inputs.count, 1, "a new day has a new budget")
+        XCTAssertTrue(coordinator.heldByBudget.isEmpty)
     }
 
     // MARK: Runs that outlive the app
@@ -712,6 +767,7 @@ final class ReviewCoordinatorTests: XCTestCase {
 
         XCTAssertEqual(engine.inputs.count, 1)
         XCTAssertEqual(coordinator.status(for: dashboard.reviews[0]), .failed("Budget exceeded"))
+        XCTAssertEqual(coordinator.failedCount, 1)
         XCTAssertEqual(usage.load().map(\.succeeded), [false])
         XCTAssertEqual(UsageTotals(coordinator.usage).costUSD, 0.5)
     }
@@ -738,7 +794,8 @@ final class ClaudeCLILiveTests: XCTestCase {
         </pr-review-input>
         """
 
-        let (review, spent) = try await ClaudeCLI(skill: skill, workDirectory: work)
+        let (review, spent) = try await ClaudeCLI(skill: skill, workDirectory: work,
+                                                  environment: ProcessInfo.processInfo.environment)
             .review(input: input, schema: try skill.schema(), options: RunOptions(maxBudgetUSD: 1),
                     sink: RunSink(output: work.appendingPathComponent("out.json")) { _ in })
 

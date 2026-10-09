@@ -25,6 +25,15 @@ public struct UsageEntry: Codable, Identifiable, Sendable, Equatable {
     public let kind: Kind
     public let usage: ClaudeUsage
     public let succeeded: Bool
+
+    public init(date: Date, repo: String, number: Int, kind: Kind, usage: ClaudeUsage, succeeded: Bool) {
+        self.date = date
+        self.repo = repo
+        self.number = number
+        self.kind = kind
+        self.usage = usage
+        self.succeeded = succeeded
+    }
 }
 
 public struct UsageTotals: Sendable, Equatable {
@@ -57,12 +66,17 @@ public final class InMemoryUsageStore: UsageStore {
     public func append(_ entry: UsageEntry) { entries.append(entry) }
 }
 
-/// A JSON file of every run, newest last.
+/// A JSON file of the runs of the last `retention`, newest last.
 public final class FileUsageStore: UsageStore {
-    private let file: URL
+    /// How long a run stays in the file. The whole file is rewritten on every run, so it must not grow forever.
+    public static let retention: TimeInterval = 365 * 86_400
 
-    public init(file: URL) {
+    private let file: URL
+    private let now: () -> Date
+
+    public init(file: URL, now: @escaping () -> Date = Date.init) {
         self.file = file
+        self.now = now
     }
 
     public func load() -> [UsageEntry] {
@@ -77,6 +91,8 @@ public final class FileUsageStore: UsageStore {
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted]
         try? FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try? encoder.encode(load() + [entry]).write(to: file, options: .atomic)
+        let cutoff = now().addingTimeInterval(-Self.retention)
+        let kept = (load() + [entry]).filter { $0.date >= cutoff }
+        try? encoder.encode(kept).write(to: file, options: .atomic)
     }
 }
