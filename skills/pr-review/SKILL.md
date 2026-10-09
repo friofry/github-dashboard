@@ -15,8 +15,9 @@ There are two ways to be called.
 
 - **By GitHub Dashboard.** The prompt contains a `<pr-review-input>` block with the pull request's metadata
   and its diff. Each diff line starts with its line number in the new file, so use those numbers as given.
-  You have no tools. Reply with the review object and nothing else. When the metadata names a `language`,
-  write everything in it except `comment`, which stays in English.
+  The metadata may carry the pull request's `description`. You have no tools. Reply with the review object and
+  nothing else. When the metadata names a `language`, write everything in it except `comment`, which stays in
+  English.
 - **By a person**, with `owner/repo#123` or a pull request URL. Fetch the input yourself:
   `gh pr view <n> --repo <owner/repo> --json number,title,url,author,baseRefName,headRefOid,body` and
   `gh pr diff <n> --repo <owner/repo>`. Work out new-file line numbers from the hunk headers. Write the
@@ -88,6 +89,30 @@ Three more fields turn the explanation into pictures the dashboard draws. Write 
 - `scenario` - optional. Use it when one concrete situation shows the problem better than words: a `title`
   naming the situation and two to five `rows`, each an `item` with what it is `now` and `after` the fix, and
   whether each is right (`nowOk`, `afterOk`). Leave it out when it would only repeat `example`.
+
+## Context
+
+Before the findings, `context` gives the reviewer the background they need to judge the change at all. It is
+about the pull request, not about its problems, and is written in the same language as `problem`. Each field is
+two or three plain sentences.
+
+- `why` - the problem or goal behind the change. Take it from the description and commit titles when they say;
+  otherwise infer it from the diff and say that it is inferred.
+- `architecture` - where the touched code sits in the project: which layer or module, what calls it and what it
+  calls. Name the files or directories. You only see the diff, so reason from paths, imports and call sites in it
+  and do not invent parts of the project you cannot see.
+- `feature` - the feature this change goes into, explained to someone who has never used the product: what a
+  user or caller does with it and what they get. No code names unless there is no other way to say it.
+- `before` and `after` - what a user or caller notices before and after this change, one or two sentences each.
+  For a refactor with no visible change, say what gets easier for the next person to change.
+- `map` - the same placement as a small diagram: `callers` (up to three things that use the changed code),
+  `changed` (one to three parts this pull request changes) and `dependencies` (up to three things the changed
+  code relies on), each a `name` as the code spells it and a `detail` of a few words. Leave a list empty rather
+  than guess.
+- `layers` - the changed files as a map of the project's layers, in the order calls or data flow through them,
+  top first ("HTTP handlers", then "Database"; tests and build files last). Each has a `name` of one to three
+  words, a `role` saying what that layer does, the file `paths` exactly as in the diff, and `next`: what it hands
+  to the next layer in the list, empty for the last one. Every changed file belongs to exactly one layer.
 
 `verdict` is `request_changes` when any finding is `high`, `approve` when there are none above `low`,
 otherwise `comment`.

@@ -3,6 +3,7 @@
   "additionalProperties": false,
   "required": [
     "summary",
+    "context",
     "verdict",
     "findings"
   ],
@@ -10,6 +11,163 @@
     "summary": {
       "type": "string",
       "description": "What the pull request does and the overall judgement, in one or two sentences."
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "why",
+        "architecture",
+        "feature",
+        "before",
+        "after",
+        "map",
+        "layers"
+      ],
+      "description": "Background for a reviewer new to this code, independent of the findings.",
+      "properties": {
+        "why": {
+          "type": "string",
+          "description": "Why the change is made: the problem or goal behind it, in two or three sentences."
+        },
+        "architecture": {
+          "type": "string",
+          "description": "Where the touched code sits in the project: the layer or module, what calls it and what it calls, in two or three sentences."
+        },
+        "feature": {
+          "type": "string",
+          "description": "The feature this change goes into, explained very simply to someone who has never used it, in two or three sentences."
+        },
+        "before": {
+          "type": "string",
+          "description": "How things behave before this change, in one or two sentences a user or caller would notice."
+        },
+        "after": {
+          "type": "string",
+          "description": "How they behave after it, in the same terms."
+        },
+        "map": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "callers",
+            "changed",
+            "dependencies"
+          ],
+          "description": "Where the change sits: what uses the changed code, the code itself, and what it relies on.",
+          "properties": {
+            "callers": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 3,
+              "description": "What calls or uses the changed code.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "detail"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "A module, file or directory as the code names it."
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "What it does here, in a few words."
+                  }
+                }
+              }
+            },
+            "changed": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 3,
+              "description": "The parts this pull request changes.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "detail"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "A module, file or directory as the code names it."
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "What it does here, in a few words."
+                  }
+                }
+              }
+            },
+            "dependencies": {
+              "type": "array",
+              "minItems": 0,
+              "maxItems": 3,
+              "description": "What the changed code relies on.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name",
+                  "detail"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "A module, file or directory as the code names it."
+                  },
+                  "detail": {
+                    "type": "string",
+                    "description": "What it does here, in a few words."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "layers": {
+          "type": "array",
+          "maxItems": 6,
+          "description": "The changed files grouped by the layer of the project they belong to, in the order calls or data flow through them, top first.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "name",
+              "role",
+              "paths",
+              "next"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The layer, one to three words."
+              },
+              "role": {
+                "type": "string",
+                "description": "What the layer does in the project, a few words."
+              },
+              "paths": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string"
+                },
+                "description": "File paths exactly as they appear in the diff."
+              },
+              "next": {
+                "type": "string",
+                "description": "What this layer hands to the next one in the list, a few words; empty for the last."
+              }
+            }
+          }
+        }
+      }
     },
     "verdict": {
       "type": "string",

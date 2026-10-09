@@ -55,9 +55,11 @@ struct ClaudeReviewsView: View {
         .onChange(of: current.flatMap { coordinator.library.reviews[$0.id]?.pr?.reviewedAt }) { selectFirstFinding() }
     }
 
+    /// The context card when the review has one, else the first finding; a choice still on the list is kept.
     private func selectFirstFinding() {
-        let findings = current.flatMap { coordinator.library.reviews[$0.id]?.sortedFindings } ?? []
-        if !findings.contains(where: { $0.id == selectedFinding }) { selectedFinding = findings.first?.id }
+        let review = current.flatMap { coordinator.library.reviews[$0.id] }
+        let rows = (review?.context == nil ? [] : [FindingColumn.contextID]) + (review?.sortedFindings.map(\.id) ?? [])
+        if !rows.contains(where: { $0 == selectedFinding }) { selectedFinding = rows.first }
     }
 
     private var pullRequestColumn: some View {
@@ -155,6 +157,9 @@ struct ClaudeReviewsView: View {
         if let finding = review?.findings.first(where: { $0.id == selectedFinding }) {
             FindingDetail(coordinator: coordinator, pullRequest: pullRequest, finding: finding,
                           selection: $selectedFinding)
+        } else if let review, let context = review.context {
+            ContextCard(pullRequest: pullRequest, review: review, context: context,
+                        diff: coordinator.library.diff(for: pullRequest))
         } else if let review, review.findings.isEmpty {
             ContentUnavailableView("No findings", systemImage: "checkmark.seal", description: Text(review.summary))
         } else {
@@ -170,9 +175,16 @@ struct FindingColumn: View {
     let pullRequest: PullRequest
     @Binding var selection: String?
 
+    /// Selection tag of the row that opens the context card; finding ids are `path:line:title`, so it cannot clash.
+    static let contextID = "pull-request-context"
+
     var body: some View {
         VStack(spacing: 0) {
             if let review = coordinator.library.reviews[pullRequest.id] {
+                if let context = review.context {
+                    ContextStrip(context: context, isSelected: selection == Self.contextID) { selection = Self.contextID }
+                        .padding([.horizontal, .top], 10)
+                }
                 List(selection: $selection) {
                     Section {
                         ForEach(review.sortedFindings) { finding in
@@ -232,6 +244,257 @@ struct FindingColumn: View {
                     .help("Hide until there is new activity in this pull request")
             }
         }
+    }
+}
+
+/// Top of the findings column: the pull request's context in three lines, always in view; opens the full card.
+struct ContextStrip: View {
+    let context: Review.Context
+    let isSelected: Bool
+    let open: () -> Void
+
+    var body: some View {
+        Button(action: open) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("About this change").font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase)
+                    Spacer()
+                    Text("More").font(.caption).foregroundStyle(.blue)
+                }
+                Grid(alignment: .leadingFirstTextBaseline, horizontalSpacing: 8, verticalSpacing: 4) {
+                    row("Why", context.why, .blue)
+                    row("Where", context.map?.changed.map(\.name).joined(separator: ", ") ?? context.architecture, .purple)
+                    row("What", context.feature, .orange)
+                }
+                .font(.caption)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(isSelected ? Color.accentColor : Color.secondary.opacity(0.25)))
+            .contentShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .buttonStyle(.plain)
+        .help("Why this pull request exists and where it fits")
+    }
+
+    private func row(_ label: String, _ text: String, _ tint: Color) -> some View {
+        GridRow {
+            Text(label).fontWeight(.semibold).foregroundStyle(tint)
+            Text(text).lineLimit(2).foregroundStyle(.primary)
+        }
+    }
+}
+
+/// Right column when the strip is chosen: what the change does, where it sits, and how the files divide up.
+struct ContextCard: View {
+    let pullRequest: PullRequest
+    let review: Review
+    let context: Review.Context
+    let diff: ParsedDiff?
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(pullRequest.repository.nameWithOwner) #\(pullRequest.number) · \(pullRequest.title)")
+                        .font(.caption.monospaced()).foregroundStyle(.secondary).lineLimit(1)
+                    Text(context.feature).font(.title3.weight(.semibold)).textSelection(.enabled)
+                }
+
+                if let before = context.before, let after = context.after {
+                    HStack(alignment: .center, spacing: 8) {
+                        change("Before", before, .red)
+                        Image(systemName: "arrow.right").foregroundStyle(.secondary)
+                        change("After", after, .green)
+                    }
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+
+                section("Where it fits") {
+                    if let map = context.map, !map.changed.isEmpty {
+                        ArchitectureMap(map: map)
+                    }
+                    Text(context.architecture).foregroundStyle(.secondary).textSelection(.enabled)
+                }
+
+                if let layers = context.layers, !layers.isEmpty {
+                    section("Layers") { LayerMap(layers: layers, diff: diff) }
+                }
+
+                section("Why") { Text(context.why).textSelection(.enabled) }
+
+                if review.findings.isEmpty {
+                    Label("No findings", systemImage: "checkmark.seal").foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: 720, alignment: .leading)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .id(pullRequest.id)
+    }
+
+    private func change(_ title: String, _ text: String, _ tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(tint).textCase(.uppercase)
+            Text(text).textSelection(.enabled)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(tint.opacity(0.1), in: RoundedRectangle(cornerRadius: 10))
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.caption.weight(.semibold)).foregroundStyle(.secondary).textCase(.uppercase)
+            content()
+        }
+    }
+}
+
+/// What uses the changed code, the changed code itself, and what it relies on, left to right.
+struct ArchitectureMap: View {
+    let map: Review.Context.Map
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            if !map.callers.isEmpty {
+                column("Used by", map.callers, highlighted: false)
+                arrow
+            }
+            column("Changed here", map.changed, highlighted: true)
+            if !map.dependencies.isEmpty {
+                arrow
+                column("Relies on", map.dependencies, highlighted: false)
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(12)
+        .background(.quaternary.opacity(0.3), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var arrow: some View {
+        Image(systemName: "arrow.right").foregroundStyle(.secondary)
+    }
+
+    private func column(_ title: String, _ nodes: [Review.Context.Node], highlighted: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title).font(.caption2.weight(.semibold)).foregroundStyle(highlighted ? Color.purple : .secondary)
+            ForEach(Array(nodes.enumerated()), id: \.offset) { _, node in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(node.name).font(.callout.weight(.semibold)).lineLimit(2)
+                    Text(node.detail).font(.caption).foregroundStyle(.secondary).lineLimit(3)
+                }
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(highlighted ? Color.purple.opacity(0.1) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(highlighted ? Color.purple : Color.secondary.opacity(0.35), lineWidth: highlighted ? 1.5 : 1))
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+}
+
+/// The project's layers the change touches, top to bottom in the order calls flow, with each layer's files.
+struct LayerMap: View {
+    let layers: [Review.Context.Layer]
+    let diff: ParsedDiff?
+
+    var body: some View {
+        let named = Set(layers.flatMap(\.paths))
+        let rest = diff?.files.map(\.path).filter { !named.contains($0) } ?? []
+        let rows = layers + (rest.isEmpty ? [] : [Review.Context.Layer(name: "Other", role: nil, paths: rest, next: nil)])
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.offset) { index, layer in
+                lane(layer)
+                if index < rows.count - 1 {
+                    flow(layer.next ?? "")
+                }
+            }
+        }
+    }
+
+    private func lane(_ layer: Review.Context.Layer) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(layer.name).font(.callout.weight(.semibold))
+                Spacer()
+                if let role = layer.role, !role.isEmpty {
+                    Text(role).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            ChipFlow(spacing: 5) {
+                ForEach(layer.paths, id: \.self) { path in
+                    HStack(spacing: 5) {
+                        Text(path.split(separator: "/").last.map(String.init) ?? path)
+                        if let file = diff?.file(path) {
+                            Text("\(file.added + file.removed)").foregroundStyle(.purple)
+                        }
+                    }
+                    .font(.caption.monospaced())
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+                    .background(.quaternary.opacity(0.6), in: RoundedRectangle(cornerRadius: 5))
+                    .help(path)
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.purple.opacity(0.06), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).strokeBorder(Color.purple.opacity(0.45)))
+    }
+
+    /// The link between two lanes: what one layer hands to the next.
+    private func flow(_ text: String) -> some View {
+        HStack(spacing: 0) {
+            Rectangle().fill(.secondary.opacity(0.4)).frame(width: 1.5)
+            Text(text).font(.caption).foregroundStyle(.secondary).padding(.leading, 14).padding(.vertical, 5)
+        }
+        .padding(.leading, 18)
+        .frame(minHeight: 14, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Lays its children out in rows, wrapping to the next row when the width runs out.
+struct ChipFlow: Layout {
+    var spacing: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews: subviews)
+        let width = rows.map { row in row.map { $0.size.width }.reduce(0, +) + spacing * CGFloat(max(row.count - 1, 0)) }.max() ?? 0
+        let height = rows.map { row in row.map { $0.size.height }.max() ?? 0 }.reduce(0, +) + spacing * CGFloat(max(rows.count - 1, 0))
+        return CGSize(width: min(width, proposal.width ?? width), height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var y = bounds.minY
+        for row in arrange(width: bounds.width, subviews: subviews) {
+            var x = bounds.minX
+            let height = row.map { $0.size.height }.max() ?? 0
+            for item in row {
+                subviews[item.index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(item.size))
+                x += item.size.width + spacing
+            }
+            y += height + spacing
+        }
+    }
+
+    private func arrange(width: CGFloat, subviews: Subviews) -> [[(index: Int, size: CGSize)]] {
+        var rows: [[(index: Int, size: CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for index in subviews.indices {
+            let size = subviews[index].sizeThatFits(.unspecified)
+            if x > 0, x + size.width > width {
+                rows.append([])
+                x = 0
+            }
+            rows[rows.count - 1].append((index, size))
+            x += size.width + spacing
+        }
+        return rows
     }
 }
 
