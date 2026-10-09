@@ -96,6 +96,11 @@ public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences 
         get { defaults.dictionary(forKey: "reviewDone") as? [String: Date] ?? [:] }
         set { defaults.set(newValue, forKey: "reviewDone") }
     }
+
+    public var reviewQueue: [String] {
+        get { defaults.stringArray(forKey: "reviewQueue") ?? [] }
+        set { defaults.set(newValue, forKey: "reviewQueue") }
+    }
 }
 
 public final class InMemoryPreferences: PreferencesStore, ReviewPreferences {
@@ -110,6 +115,7 @@ public final class InMemoryPreferences: PreferencesStore, ReviewPreferences {
     public var reviewLanguage = ""
     public var reviewBaseline: [String]?
     public var reviewDone: [String: Date] = [:]
+    public var reviewQueue: [String] = []
 
     public init(orgs: String = "", ignoredLogins: String = "", seen: [String: Date] = [:]) {
         self.orgs = orgs

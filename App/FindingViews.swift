@@ -10,8 +10,8 @@ struct FindingDetail: View {
     @Binding var selection: String?
 
     var body: some View {
-        let diff = coordinator.diff(for: pullRequest)
-        let link = coordinator.link(for: finding, in: pullRequest)
+        let diff = coordinator.library.diff(for: pullRequest)
+        let link = coordinator.library.link(for: finding, in: pullRequest)
         let excerpt = diff?.excerpt(path: finding.path, from: finding.line, to: finding.endLine ?? finding.line) ?? []
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
@@ -58,7 +58,7 @@ struct FindingDetail: View {
                            location: location)
 
                 if let diff, !diff.files.isEmpty {
-                    PullRequestMap(diff: diff, findings: coordinator.reviews[pullRequest.id]?.findings ?? [],
+                    PullRequestMap(diff: diff, findings: coordinator.library.reviews[pullRequest.id]?.findings ?? [],
                                    current: finding, selection: $selection)
                 }
             }
@@ -242,7 +242,7 @@ struct CommentBox: View {
     @State private var confirmsPublish = false
 
     var body: some View {
-        let key = ReviewCoordinator.key(finding, in: pullRequest)
+        let key = CommentPublishing.key(finding, in: pullRequest)
         VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Text("Comment to post").font(.caption).foregroundStyle(.secondary)
@@ -272,7 +272,7 @@ struct CommentBox: View {
                 if let posted = finding.postedURL {
                     Button("Published", systemImage: "checkmark.circle.fill") { openURL(posted) }
                         .tint(.green).help("Open the comment on GitHub")
-                } else if coordinator.publishing.contains(key) {
+                } else if coordinator.publishing.inFlight.contains(key) {
                     ProgressView().controlSize(.small)
                 } else {
                     Button("Publish", systemImage: "paperplane") {
@@ -287,7 +287,7 @@ struct CommentBox: View {
                     Button("Discard") { draft = finding.comment }
                 }
             }
-            if let error = coordinator.publishErrors[key] {
+            if let error = coordinator.publishing.errors[key] {
                 Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
             }
         }
@@ -295,7 +295,7 @@ struct CommentBox: View {
         // Posting is public and cannot be taken back from here, so it always asks first.
         .confirmationDialog("Publish this comment?", isPresented: $confirmsPublish) {
             Button("Publish to \(pullRequest.repository.nameWithOwner) #\(pullRequest.number)") {
-                Task { await coordinator.publish(current, in: pullRequest) }
+                Task { await coordinator.publishing.publish(current, in: pullRequest) }
             }
             Button("Cancel", role: .cancel) {}
         } message: {
@@ -305,11 +305,11 @@ struct CommentBox: View {
 
     /// The finding as stored now, including an edit saved a moment ago.
     private var current: Finding {
-        coordinator.reviews[pullRequest.id]?.findings.first { $0.id == finding.id } ?? finding
+        coordinator.library.reviews[pullRequest.id]?.findings.first { $0.id == finding.id } ?? finding
     }
 
     private func save() {
-        if draft != finding.comment { coordinator.setComment(draft, for: finding, in: pullRequest) }
+        if draft != finding.comment { coordinator.publishing.setComment(draft, for: finding, in: pullRequest) }
     }
 
     private var rendered: some View {

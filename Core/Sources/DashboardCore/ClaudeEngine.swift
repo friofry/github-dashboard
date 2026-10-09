@@ -30,9 +30,10 @@ public struct RunOptions: Sendable {
 
 public protocol ReviewEngine: Sendable {
     /// Runs the `pr-review` skill on a prepared input block. The model gets no tools.
-    func review(input: String, schema: String, options: RunOptions) async throws -> (Review, ClaudeUsage)
+    /// - Parameter sink: where the run's output goes so that it outlives the app; nil keeps it in memory.
+    func review(input: String, schema: String, options: RunOptions, sink: RunSink?) async throws -> (Review, ClaudeUsage)
     /// Runs the `teach` skill inside a lesson folder; it may only read and write files there.
-    func lesson(in directory: URL, prompt: String, options: RunOptions) async throws -> ClaudeUsage
+    func lesson(in directory: URL, prompt: String, options: RunOptions, sink: RunSink?) async throws -> ClaudeUsage
 }
 
 /// The JSON object `claude -p --output-format json` prints when it finishes.
@@ -95,20 +96,20 @@ public struct ClaudeCLI: ReviewEngine {
             .first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
-    public func review(input: String, schema: String, options: RunOptions) async throws -> (Review, ClaudeUsage) {
+    public func review(input: String, schema: String, options: RunOptions, sink: RunSink?) async throws -> (Review, ClaudeUsage) {
         try installSkill()
         // No tools and only this folder's settings: the diff is untrusted, and the user's plugins are not needed.
         let arguments = ["-p", "/pr-review", "--output-format", "json", "--tools", "",
                          "--setting-sources", "project", "--json-schema", schema]
-        let result = try await run(arguments, options: options, in: workDirectory, input: input, timeout: 600)
+        let result = try await run(arguments, options: options, in: workDirectory, input: input, timeout: 600, sink: sink)
         return (try result.review(), result.usage)
     }
 
-    public func lesson(in directory: URL, prompt: String, options: RunOptions) async throws -> ClaudeUsage {
+    public func lesson(in directory: URL, prompt: String, options: RunOptions, sink: RunSink?) async throws -> ClaudeUsage {
         // File tools only, so nothing the lesson reads can leave the machine; edits are confined to the folder.
         let arguments = ["-p", "/teach \(prompt)", "--output-format", "json",
                          "--tools", "Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits"]
-        let result = try await run(arguments, options: options, in: directory, input: "", timeout: 1200)
+        let result = try await run(arguments, options: options, in: directory, input: "", timeout: 1200, sink: sink)
         guard !result.isError else {
             throw ClaudeError.failed(result.text.isEmpty ? "Claude could not build the lesson." : result.text, result.usage)
         }
@@ -124,7 +125,7 @@ public struct ClaudeCLI: ReviewEngine {
     }
 
     private func run(_ arguments: [String], options: RunOptions, in directory: URL, input: String,
-                     timeout: TimeInterval) async throws -> ClaudeResult {
+                     timeout: TimeInterval, sink: RunSink?) async throws -> ClaudeResult {
         guard let executable = Self.executable else { throw ClaudeError.notInstalled }
         var arguments = arguments + ["--max-budget-usd", String(format: "%.2f", options.maxBudgetUSD)]
         if !options.model.isEmpty { arguments += ["--model", options.model] }
@@ -136,7 +137,15 @@ public struct ClaudeCLI: ReviewEngine {
             process.arguments = arguments
             process.currentDirectoryURL = directory
             process.standardInput = stdin
-            process.standardOutput = stdout
+            // To a file when there is a sink: a pipe breaks if the app quits, a file is still there afterwards.
+            var outputFile: FileHandle?
+            if let sink {
+                try FileManager.default.createDirectory(at: sink.output.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                FileManager.default.createFile(atPath: sink.output.path, contents: nil)
+                outputFile = try FileHandle(forWritingTo: sink.output)
+            }
+            process.standardOutput = outputFile ?? stdout
             process.standardError = FileHandle.nullDevice
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
@@ -145,6 +154,7 @@ public struct ClaudeCLI: ReviewEngine {
             environment["GITHUB_TOKEN"] = nil
             process.environment = environment
             try process.run()
+            sink?.started(process.processIdentifier)
 
             let watchdog = DispatchWorkItem { if process.isRunning { process.terminate() } }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: watchdog)
@@ -153,9 +163,13 @@ public struct ClaudeCLI: ReviewEngine {
                 stdin.fileHandleForWriting.write(Data(input.utf8))
                 try? stdin.fileHandleForWriting.close()
             }
-            let data = stdout.fileHandleForReading.readDataToEndOfFile()
+            var data = sink == nil ? stdout.fileHandleForReading.readDataToEndOfFile() : Data()
             process.waitUntilExit()
             watchdog.cancel()
+            if let sink {
+                try? outputFile?.close()
+                data = (try? Data(contentsOf: sink.output)) ?? Data()
+            }
 
             guard !data.isEmpty else {
                 throw ClaudeError.failed("Claude exited with status \(process.terminationStatus) and no output.", nil)
