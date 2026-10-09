@@ -3,16 +3,35 @@ import SwiftUI
 
 struct PullRequestList: View {
     @Environment(DashboardStore.self) private var store
+    @Environment(AutoRestarter.self) private var restarter
     let pullRequests: [PullRequest]
     let showsAuthor: Bool
+    @State private var filter: AutoRestarter.Filter?
 
     var body: some View {
         if pullRequests.isEmpty {
             ContentUnavailableView("Nothing here", systemImage: "checkmark.seal",
                                    description: Text("No open pull requests"))
-        } else {
+        } else if showsAuthor {
             List(store.sorted(pullRequests)) { pullRequest in
-                PullRequestRow(pullRequest: pullRequest, showsAuthor: showsAuthor)
+                PullRequestRow(pullRequest: pullRequest, showsAuthor: true)
+            }
+        } else {
+            // Only my own pull requests: restarting someone else's CI is theirs to decide.
+            let shown = store.sorted(pullRequests).filter { pullRequest in
+                filter.map { restarter.matches(pullRequest, $0) } ?? true
+            }
+            VStack(spacing: 0) {
+                AutoRestartStrip(pullRequests: pullRequests, filter: $filter)
+                List {
+                    Section {
+                        ForEach(shown) { PullRequestRow(pullRequest: $0, showsAuthor: false) }
+                        if shown.isEmpty, let filter {
+                            Text("No pull request has \(filter.title) checks.").foregroundStyle(.secondary)
+                        }
+                    }
+                    JobsSection(pullRequests: pullRequests)
+                }
             }
         }
     }
@@ -26,10 +45,15 @@ struct PullRequestRow: View {
     let showsAuthor: Bool
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .top, spacing: 10) {
             link
-            // Only my own pull requests: restarting someone else's CI is theirs to decide.
-            if !showsAuthor { restartToggle.padding(.top, 2) }
+            if showsAuthor {
+                if let state = pullRequest.ci { CIStateIcon(state: state) }
+            } else {
+                ChecksButton(pullRequest: pullRequest)
+            }
+            Text("+\(pullRequest.additions)").foregroundStyle(.green).font(.caption.monospacedDigit())
+            Text("−\(pullRequest.deletions)").foregroundStyle(.red).font(.caption.monospacedDigit())
         }
         .padding(.vertical, 3)
     }
@@ -57,6 +81,10 @@ struct PullRequestRow: View {
                         if restarts > 0 {
                             Text("· CI restarted \(restarts)×").foregroundStyle(.orange)
                         }
+                        // Said only where the pull request differs from the switch above the list.
+                        if !showsAuthor, restarter.isEnabled(pullRequest) != restarter.restartAll {
+                            Text(restarter.restartAll ? "· auto-restart paused" : "· auto-restart on")
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -67,45 +95,16 @@ struct PullRequestRow: View {
                     }
                 }
                 Spacer()
-                ciIcon
-                Text("+\(pullRequest.additions)").foregroundStyle(.green).font(.caption.monospacedDigit())
-                Text("−\(pullRequest.deletions)").foregroundStyle(.red).font(.caption.monospacedDigit())
             }
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
-    private var restartToggle: some View {
-        let isOn = restarter.isEnabled(pullRequest)
-        return Button {
-            restarter.setEnabled(pullRequest, !isOn)
-        } label: {
-            Image(systemName: isOn ? "arrow.clockwise.circle.fill" : "arrow.clockwise.circle")
-                .foregroundStyle(isOn ? Color.accentColor : .secondary)
-        }
-        .buttonStyle(.borderless)
-        .disabled(restarter.restartAll)
-        .help(restarter.restartAll
-            ? "Failed Jenkins jobs restart for all your pull requests (Settings)"
-            : isOn ? "Failed Jenkins jobs restart on their own. Click to stop." : "Restart failed Jenkins jobs on their own")
-        .accessibilityLabel("Auto-restart failed jobs")
-        .accessibilityValue(isOn ? "On" : "Off")
-    }
-
     @ViewBuilder private var decisionBadge: some View {
         switch pullRequest.decision {
         case .approved: Badge(text: "Approved", color: .green)
         case .changesRequested: Badge(text: "Changes requested", color: .red)
-        case nil: EmptyView()
-        }
-    }
-
-    @ViewBuilder private var ciIcon: some View {
-        switch pullRequest.ci {
-        case .success: Image(systemName: "checkmark.circle.fill").foregroundStyle(.green).help("Checks passed")
-        case .failure: Image(systemName: "xmark.circle.fill").foregroundStyle(.red).help("Checks failed")
-        case .pending: Image(systemName: "clock.fill").foregroundStyle(.orange).help("Checks running")
         case nil: EmptyView()
         }
     }

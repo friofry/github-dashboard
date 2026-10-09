@@ -130,9 +130,22 @@ public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences,
         set { defaults.set(newValue, forKey: "jenkinsUser") }
     }
 
-    public var autoRestartChecks: String {
-        get { defaults.string(forKey: "autoRestartChecks") ?? "" }
-        set { defaults.set(newValue, forKey: "autoRestartChecks") }
+    public var autoRestartPausedPullRequests: [String] {
+        get { defaults.stringArray(forKey: "autoRestartPausedPullRequests") ?? [] }
+        set { defaults.set(newValue, forKey: "autoRestartPausedPullRequests") }
+    }
+
+    public var autoRestartOffChecks: [String] {
+        get { defaults.stringArray(forKey: "autoRestartOffChecks") ?? [] }
+        set { defaults.set(newValue, forKey: "autoRestartOffChecks") }
+    }
+
+    public var restartOutcomes: [String: AutoRestartPolicy.Outcome] {
+        get {
+            guard let data = defaults.data(forKey: "restartOutcomes") else { return [:] }
+            return (try? JSONDecoder().decode([String: AutoRestartPolicy.Outcome].self, from: data)) ?? [:]
+        }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "restartOutcomes") }
     }
 
     public var autoRestartLimit: Int {
@@ -166,7 +179,9 @@ public final class InMemoryPreferences: PreferencesStore, ReviewPreferences, Res
     public var autoRestartPullRequests: [String] = []
     public var jenkinsServer = ""
     public var jenkinsUser = ""
-    public var autoRestartChecks = ""
+    public var autoRestartPausedPullRequests: [String] = []
+    public var autoRestartOffChecks: [String] = []
+    public var restartOutcomes: [String: AutoRestartPolicy.Outcome] = [:]
     public var autoRestartLimit = 2
     public var restartAttempts: [String: AutoRestartPolicy.Attempt] = [:]
 

@@ -72,11 +72,11 @@ final class CheckDecodingTests: XCTestCase {
 }
 
 final class AutoRestartPolicyTests: XCTestCase {
-    private func decide(_ pullRequests: [PullRequest], checks: [String] = [],
+    private func decide(_ pullRequests: [PullRequest], off: Set<String> = [],
                         attempts: [String: AutoRestartPolicy.Attempt] = [:], enabled: Bool = true,
                         limit: Int = 2) -> [AutoRestartPolicy.Restart] {
         AutoRestartPolicy.decide(pullRequests: pullRequests, isEnabled: { _ in enabled }, server: server,
-                                 checks: checks, attempts: attempts, limit: limit)
+                                 off: off, attempts: attempts, limit: limit)
     }
 
     func testRestartsOnlyFailedChecksOnTheJenkinsServer() throws {
@@ -97,12 +97,30 @@ final class AutoRestartPolicyTests: XCTestCase {
         XCTAssertTrue(decide([try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun3)])], enabled: false).isEmpty)
     }
 
-    func testChecksFilterMatchesPrefixes() throws {
+    func testJobsSwitchedOffAreLeftAlone() throws {
         let pr = try pullRequest(checks: [
             ("jenkins/prs/linux/x86_64/main", "FAILURE", linuxRun3),
             ("jenkins/prs/package/status-app", "FAILURE", "https://ci.acme.dev/job/api/job/package/job/PR-7/5/"),
         ])
-        XCTAssertEqual(decide([pr], checks: ["jenkins/prs/linux"]).map(\.check), ["jenkins/prs/linux/x86_64/main"])
+        XCTAssertEqual(decide([pr], off: ["jenkins/prs/package/status-app"]).map(\.check),
+                       ["jenkins/prs/linux/x86_64/main"])
+    }
+
+    func testJobsAreCountedOverPullRequestsFailingFirst() throws {
+        let first = try pullRequest(id: "PR_1", checks: [
+            ("jenkins/linux", "FAILURE", linuxRun3),
+            ("jenkins/mac", "SUCCESS", "https://ci.acme.dev/job/api/job/mac/job/PR-7/2/"),
+            ("actions", "FAILURE", "https://github.com/acme/api/actions/runs/1"),
+        ])
+        let second = try pullRequest(id: "PR_2", checks: [
+            ("jenkins/linux", "PENDING", linuxRun4),
+            ("jenkins/mac", "SUCCESS", "https://ci.acme.dev/job/api/job/mac/job/PR-7/2/"),
+        ])
+        let jobs = AutoRestartPolicy.jobs(pullRequests: [first, second], server: server)
+        XCTAssertEqual(jobs.map(\.name), ["jenkins/linux", "jenkins/mac"])
+        XCTAssertEqual(jobs.first.map { [$0.failing, $0.running, $0.passing] }, [1, 1, 0])
+        XCTAssertEqual(jobs.last?.passing, 2)
+        XCTAssertTrue(AutoRestartPolicy.jobs(pullRequests: [first], server: URL(string: "https://ci.evil.dev")!).isEmpty)
     }
 
     func testTheSameFailedRunIsRestartedOnce() throws {
@@ -191,6 +209,101 @@ final class AutoRestarterTests: XCTestCase {
         XCTAssertEqual(restarter.restarts(for: pr), 1)
         XCTAssertNotNil(restarter.log.first?.error)
         XCTAssertNotNil(restarter.lastError)
+    }
+
+    func testOnePullRequestCanBePausedWhileAllAreOn() async throws {
+        let paused = try pullRequest(id: "PR_1", checks: [("jenkins/linux", "FAILURE", linuxRun3)])
+        let other = try pullRequest(id: "PR_2", checks: [("jenkins/linux", "FAILURE", linuxRun4)])
+        let restarter = restarter()
+        restarter.restartAll = true
+        restarter.setEnabled(paused, false)
+
+        await restarter.sync(mine: [paused, other])
+
+        XCTAssertEqual(jenkins.restarted.map(\.number), [4])
+        XCTAssertFalse(restarter.isEnabled(paused))
+        XCTAssertEqual(preferences.autoRestartPausedPullRequests, ["PR_1"])
+        XCTAssertTrue(preferences.autoRestartPullRequests.isEmpty)
+    }
+
+    func testAJobSwitchedOffIsNotRestarted() async throws {
+        let restarter = restarter()
+        restarter.restartAll = true
+        restarter.setCheckEnabled("jenkins/linux", false)
+        await restarter.sync(mine: [try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun3)])])
+        XCTAssertTrue(jenkins.restarted.isEmpty)
+        XCTAssertEqual(preferences.autoRestartOffChecks, ["jenkins/linux"])
+    }
+
+    func testRestartResultsAreCountedPerJobOnce() async throws {
+        let restarter = restarter()
+        restarter.restartAll = true
+        let failed = try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun3)])
+        await restarter.sync(mine: [failed])
+        await restarter.sync(mine: [failed])
+        XCTAssertNil(restarter.outcomes["jenkins/linux"], "GitHub still shows the run that was restarted")
+
+        let failedAgain = try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun4)])
+        await restarter.sync(mine: [failedAgain])
+        let passed = try pullRequest(checks: [("jenkins/linux", "SUCCESS", linuxRun4)])
+        await restarter.sync(mine: [passed])
+        await restarter.sync(mine: [passed])
+
+        XCTAssertEqual(restarter.outcomes["jenkins/linux"], .init(passed: 1, failedAgain: 1))
+        XCTAssertEqual(preferences.restartOutcomes["jenkins/linux"]?.total, 2)
+    }
+
+    func testLinesSayWhatHappenedToEachCheck() async throws {
+        let restarter = restarter()
+        restarter.restartAll = true
+        restarter.limit = 1
+        let pr = try pullRequest(checks: [
+            ("jenkins/mac", "SUCCESS", "https://ci.acme.dev/job/api/job/mac/job/PR-7/2/"),
+            ("jenkins/win", "PENDING", "https://ci.acme.dev/job/api/job/win/job/PR-7/2/"),
+            ("jenkins/linux", "FAILURE", linuxRun3),
+            ("actions", "FAILURE", "https://github.com/acme/api/actions/runs/1"),
+        ])
+        XCTAssertEqual(restarter.lines(for: pr).map(\.check.name), ["actions", "jenkins/linux", "jenkins/win", "jenkins/mac"])
+        XCTAssertEqual(restarter.lines(for: pr).map(\.canRestart), [false, true, false, false])
+        XCTAssertEqual(restarter.restartable(in: [pr]), 1)
+
+        await restarter.sync(mine: [pr])
+        XCTAssertEqual(restarter.lines(for: pr).first { $0.check.name == "jenkins/linux" }?.status, .restarting)
+        XCTAssertTrue(restarter.matches(pr, .failed) && restarter.matches(pr, .running) && restarter.matches(pr, .restarted))
+        XCTAssertFalse(restarter.matches(pr, .gaveUp))
+
+        let failedAgain = try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun4)])
+        let line = try XCTUnwrap(restarter.lines(for: failedAgain).first)
+        XCTAssertEqual(line.status, .gaveUp)
+        XCTAssertEqual(line.restarts, 1)
+        XCTAssertTrue(line.canRestart, "the limit only stops the automatic restarts")
+        XCTAssertTrue(restarter.matches(failedAgain, .gaveUp))
+    }
+
+    func testRestartByHandIgnoresTheSwitchAndTheLimit() async throws {
+        let restarter = restarter()
+        restarter.limit = 1
+        let pr = try pullRequest(checks: [
+            ("jenkins/linux", "FAILURE", linuxRun3),
+            ("jenkins/package", "FAILURE", "https://ci.acme.dev/job/api/job/package/job/PR-7/5/"),
+        ])
+
+        await restarter.restartNow(pr, check: "jenkins/linux")
+        await restarter.restartNow(pr, check: "jenkins/linux")
+        XCTAssertEqual(jenkins.restarted.map(\.number), [3], "the same failed run is not started twice")
+        XCTAssertEqual(restarter.restarts(for: pr), 0)
+
+        await restarter.restartAllFailed(in: [pr])
+        XCTAssertEqual(jenkins.restarted.map(\.number), [3, 5])
+    }
+
+    func testARefusedRestartByHandCanBeTriedAgain() async throws {
+        jenkins.error = JenkinsError.forbidden
+        let restarter = restarter()
+        let pr = try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun3)])
+        await restarter.restartNow(pr, check: "jenkins/linux")
+        XCTAssertNotNil(restarter.lastError)
+        XCTAssertEqual(restarter.lines(for: pr).first?.canRestart, true)
     }
 
     func testCountsForOldCommitsAreDropped() async throws {

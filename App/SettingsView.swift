@@ -118,7 +118,6 @@ struct AutoRestartSection: View {
                 }
             }
             Toggle("All my pull requests", isOn: $restarter.restartAll)
-            TextField("Only these checks", text: $restarter.checks, prompt: Text("every Jenkins check"))
             Stepper("Up to \(restarter.limit) restart\(restarter.limit == 1 ? "" : "s") per check per commit",
                     value: $restarter.limit, in: 1...5)
             if let error = restarter.lastError {
@@ -135,10 +134,10 @@ struct AutoRestartSection: View {
             Text("Auto-restart failed CI")
         } footer: {
             Text("""
-            Switch it on per pull request with the ↻ button in My PRs, or here for all of them. Only failed checks \
-            that link to this Jenkins are restarted; a new commit starts the count again. Make the API token in \
-            Jenkins under your name → Security (or Configure) → API Token. Comma separate check names or prefixes, \
-            e.g. jenkins/prs/linux.
+            The same switch sits above My PRs; a pull request's CI icon there opens its checks and its own switch, \
+            and the list of Jenkins jobs below has one per job. Only failed checks that link to this Jenkins are \
+            restarted; a new commit starts the count again. Make the API token in Jenkins under your name → \
+            Security (or Configure) → API Token.
             """)
         }
         #if os(iOS)
