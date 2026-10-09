@@ -1,5 +1,6 @@
 import DashboardCore
 import SwiftUI
+import UserNotifications
 
 @main
 struct DashboardApp: App {
@@ -13,12 +14,17 @@ struct DashboardApp: App {
                 .environment(store)
                 .environment(model.reviews)
                 .environment(model.restarter)
+                .environment(model.notifier)
                 .environment(\.buildCommit, model.config.commit)
                 .frame(minWidth: 1040, minHeight: 560)
         }
 
         MenuBarExtra {
-            MenuBarContent().environment(store).environment(model.reviews).environment(model.restarter)
+            MenuBarContent()
+                .environment(store)
+                .environment(model.reviews)
+                .environment(model.restarter)
+                .environment(model.notifier)
         } label: {
             // Failed or held-back Claude reviews and failed restarts show here too, so they are seen without opening the window.
             Image(systemName: store.errorMessage == nil && (model.reviews?.alerts ?? []).isEmpty
@@ -32,12 +38,17 @@ struct DashboardApp: App {
                 .environment(store)
                 .environment(model.reviews)
                 .environment(model.restarter)
+                .environment(model.notifier)
                 .environment(\.buildCommit, model.config.commit)
                 .frame(width: 480)
         }
         #else
         WindowGroup {
-            RootView().environment(store).environment(model.restarter).environment(\.buildCommit, model.config.commit)
+            RootView()
+                .environment(store)
+                .environment(model.restarter)
+                .environment(model.notifier)
+                .environment(\.buildCommit, model.config.commit)
         }
         #endif
     }
@@ -51,6 +62,7 @@ final class AppModel {
     /// Nil where Claude Code cannot run (iOS).
     let reviews: ReviewCoordinator?
     let restarter: AutoRestarter
+    let notifier: Notifier
 
     init() {
         let config = AppConfig()
@@ -70,11 +82,13 @@ final class AppModel {
             preferences: preferences
         )
         self.restarter = restarter
+        notifier = Notifier(source: service, poster: SystemNotifications(), preferences: preferences)
         store.onLoaded = { [reviews] dashboard, reviewed in
             reviews?.sync(with: dashboard, reviewed: reviewed)
             Task { await restarter.sync(mine: dashboard.mine) }
         }
         store.startAutoRefresh()
+        notifier.start { [store] in store.dashboard?.viewer }
     }
 
     private static func makeReviews(service: GitHubService, preferences: UserDefaultsPreferences,
@@ -120,6 +134,7 @@ struct MenuBarContent: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(ReviewCoordinator.self) private var coordinator: ReviewCoordinator?
     @Environment(AutoRestarter.self) private var restarter
+    @Environment(Notifier.self) private var notifier
 
     var body: some View {
         if let dashboard = store.dashboard {
@@ -143,6 +158,10 @@ struct MenuBarContent: View {
             Divider()
         }
         if let error = restarter.lastError {
+            Text(error)
+            Divider()
+        }
+        if let error = notifier.lastError {
             Text(error)
             Divider()
         }
@@ -171,3 +190,49 @@ extension ReviewCoordinator {
     }
 }
 #endif
+
+/// Shows alerts in Notification Center and opens the pull request when one is clicked.
+@MainActor
+final class SystemNotifications: NSObject, NotificationPosting, UNUserNotificationCenterDelegate {
+    private let center = UNUserNotificationCenter.current()
+
+    override init() {
+        super.init()
+        // Set at launch, so a click that starts the app is still delivered here.
+        center.delegate = self
+    }
+
+    func requestPermission() async -> Bool {
+        (try? await center.requestAuthorization(options: [.alert, .sound])) ?? false
+    }
+
+    func post(_ alert: NotificationAlert) async throws {
+        let content = UNMutableNotificationContent()
+        content.title = alert.title
+        content.subtitle = alert.subtitle
+        content.body = alert.body
+        content.sound = .default
+        content.userInfo = ["url": alert.url.absoluteString]
+        try await center.add(UNNotificationRequest(identifier: alert.id, content: content, trigger: nil))
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            willPresent notification: UNNotification) async
+        -> UNNotificationPresentationOptions {
+        [.banner, .list, .sound]
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter,
+                                            didReceive response: UNNotificationResponse) async {
+        guard let text = response.notification.request.content.userInfo["url"] as? String,
+              let url = URL(string: text), url.scheme == "https", url.host == "github.com"
+        else { return }
+        await MainActor.run {
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #else
+            UIApplication.shared.open(url)
+            #endif
+        }
+    }
+}

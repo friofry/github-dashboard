@@ -102,6 +102,20 @@ again through `buildWithParameters` (or `build` for a job without parameters):
 - one restart per failed run: while GitHub still shows that run, the restart is on its way
 - **Only these checks** narrows it down by name or prefix, e.g. `jenkins/prs/linux`
 
+## Notifications
+
+While the app runs it checks your GitHub notifications every minute and shows a system notification for:
+
+- a comment or review on your pull request
+- a reply in a conversation you commented in
+- a mention of you or your team
+- a review request or an assignment
+
+Each one can be switched off in Settings → **Notifications**. Your own comments and bots are skipped, nothing from
+before the first start pops up, and clicking a notification opens the pull request. GitHub does not let
+fine-grained tokens read notifications: sign in with the GitHub CLI, or use a classic token with the
+`notifications` scope.
+
 ## How it counts
 
 - **New** means activity by someone else since you last opened that pull request. Before the first open,

@@ -41,7 +41,8 @@ public protocol PreferencesStore: AnyObject {
     var seen: [String: Date] { get set }
 }
 
-public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences, RestartPreferences {
+public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences, RestartPreferences,
+    NotificationPreferences {
     private let defaults: UserDefaults
     private let config: AppConfig
 
@@ -147,9 +148,25 @@ public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences,
         }
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "restartAttempts") }
     }
+
+    public var notificationKinds: [String]? {
+        get { defaults.stringArray(forKey: "notificationKinds") }
+        set { defaults.set(newValue, forKey: "notificationKinds") }
+    }
+
+    public var notificationsSince: Date? {
+        get { defaults.object(forKey: "notificationsSince") as? Date }
+        set { defaults.set(newValue, forKey: "notificationsSince") }
+    }
+
+    public var deliveredNotifications: [String: Date] {
+        get { defaults.dictionary(forKey: "deliveredNotifications") as? [String: Date] ?? [:] }
+        set { defaults.set(newValue, forKey: "deliveredNotifications") }
+    }
 }
 
-public final class InMemoryPreferences: PreferencesStore, ReviewPreferences, RestartPreferences {
+public final class InMemoryPreferences: PreferencesStore, ReviewPreferences, RestartPreferences,
+    NotificationPreferences {
     public var orgs: String
     public var ignoredLogins: String
     public var seen: [String: Date]
@@ -169,6 +186,9 @@ public final class InMemoryPreferences: PreferencesStore, ReviewPreferences, Res
     public var autoRestartChecks = ""
     public var autoRestartLimit = 2
     public var restartAttempts: [String: AutoRestartPolicy.Attempt] = [:]
+    public var notificationKinds: [String]?
+    public var notificationsSince: Date?
+    public var deliveredNotifications: [String: Date] = [:]
 
     public init(orgs: String = "", ignoredLogins: String = "", seen: [String: Date] = [:]) {
         self.orgs = orgs
