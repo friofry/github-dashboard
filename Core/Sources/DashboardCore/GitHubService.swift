@@ -216,6 +216,38 @@ public struct GitHubService: DashboardService, PullRequestDiffSource, CommentPub
     }
 }
 
+extension GitHubService: NotificationSource {
+    public func fetchNotifications(since: Date) async throws -> [GitHubNotification] {
+        var components = URLComponents(string: "https://api.github.com/notifications")!
+        components.queryItems = [
+            URLQueryItem(name: "since", value: ISO8601DateFormatter().string(from: since)),
+            URLQueryItem(name: "per_page", value: "50"),
+        ]
+        return try await get(components.url!)
+    }
+
+    public func fetchComment(_ url: URL) async throws -> NotificationComment {
+        // The address comes from GitHub's answer; the token only ever goes back to the API itself.
+        guard url.scheme == "https", url.host == "api.github.com" else { throw DashboardError.http(400) }
+        return try await get(url)
+    }
+
+    private func get<Payload: Decodable>(_ url: URL) async throws -> Payload {
+        let token = try await requireToken()
+        var request = URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30)
+        request.setValue("bearer \(token.value)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+
+        let (data, response) = try await transport.send(request)
+        if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+            throw status == 401 ? DashboardError.unauthorized : DashboardError.http(status)
+        }
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try decoder.decode(Payload.self, from: data)
+    }
+}
+
 private struct Search<Node: Decodable>: Decodable {
     struct PageInfo: Decodable {
         let hasNextPage: Bool

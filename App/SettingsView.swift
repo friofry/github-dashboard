@@ -60,6 +60,8 @@ struct SettingsView: View {
 
             AutoRestartSection()
 
+            NotificationsSection()
+
             Section {
                 TextField("Ignored logins", text: $store.ignoredLogins, prompt: Text("none"))
             } header: {
@@ -146,5 +148,31 @@ struct AutoRestartSection: View {
         .autocorrectionDisabled()
         #endif
         .task { await restarter.checkToken() }
+    }
+}
+
+/// Which GitHub activity pops up as a system notification.
+struct NotificationsSection: View {
+    @Environment(Notifier.self) private var notifier
+
+    var body: some View {
+        Section {
+            ForEach(NotificationKind.allCases, id: \.self) { kind in
+                Toggle(kind.label, isOn: Binding(
+                    get: { notifier.isEnabled(kind) },
+                    set: { notifier.setEnabled(kind, $0) }
+                ))
+            }
+            if let error = notifier.lastError {
+                Text(error).foregroundStyle(.red)
+            }
+        } header: {
+            Text("Notifications")
+        } footer: {
+            Text("""
+            Read from your GitHub notifications every minute while the app runs. Your own comments and bots are \
+            skipped; clicking a notification opens the pull request.
+            """)
+        }
     }
 }
