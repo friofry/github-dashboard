@@ -87,6 +87,21 @@ same skill in your own Claude Code sessions (`/pr-review owner/repo#123`):
 Pull request text is untrusted, so the review runs with no tools at all: Claude receives the diff and returns
 the form, and the app builds every link itself.
 
+## Restart failed Jenkins jobs
+
+Flaky CI does not have to mean pressing Restart by hand. In **Settings → Auto-restart failed CI** enter the Jenkins
+address (e.g. `https://ci.example.com`), your Jenkins user and an API token (Jenkins → your name → Security → API
+Token; it is kept in the Keychain). Then press ↻ next to any pull request in **My PRs**, or switch on **All my pull
+requests**.
+
+On each refresh the app looks at the head commit's checks. A check that failed and links to that Jenkins is started
+again through `buildWithParameters` (or `build` for a job without parameters):
+
+- only your own pull requests, and only checks on the Jenkins you entered, so the token never goes anywhere else
+- at most 2 restarts per check per commit (1 to 5 in Settings); a new commit starts the count again
+- one restart per failed run: while GitHub still shows that run, the restart is on its way
+- **Only these checks** narrows it down by name or prefix, e.g. `jenkins/prs/linux`
+
 ## How it counts
 
 - **New** means activity by someone else since you last opened that pull request. Before the first open,

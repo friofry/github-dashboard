@@ -12,15 +12,17 @@ struct DashboardApp: App {
             RootView()
                 .environment(store)
                 .environment(model.reviews)
+                .environment(model.restarter)
                 .environment(\.buildCommit, model.config.commit)
                 .frame(minWidth: 1040, minHeight: 560)
         }
 
         MenuBarExtra {
-            MenuBarContent().environment(store).environment(model.reviews)
+            MenuBarContent().environment(store).environment(model.reviews).environment(model.restarter)
         } label: {
-            // Failed or held-back Claude reviews show here too, so they are seen without opening the window.
+            // Failed or held-back Claude reviews and failed restarts show here too, so they are seen without opening the window.
             Image(systemName: store.errorMessage == nil && (model.reviews?.alerts ?? []).isEmpty
+                && model.restarter.lastError == nil
                 ? "arrow.triangle.pull" : "exclamationmark.triangle")
             if store.newTotal > 0 { Text("\(store.newTotal)") }
         }
@@ -29,12 +31,13 @@ struct DashboardApp: App {
             SettingsView()
                 .environment(store)
                 .environment(model.reviews)
+                .environment(model.restarter)
                 .environment(\.buildCommit, model.config.commit)
                 .frame(width: 480)
         }
         #else
         WindowGroup {
-            RootView().environment(store).environment(\.buildCommit, model.config.commit)
+            RootView().environment(store).environment(model.restarter).environment(\.buildCommit, model.config.commit)
         }
         #endif
     }
@@ -47,6 +50,7 @@ final class AppModel {
     let store: DashboardStore
     /// Nil where Claude Code cannot run (iOS).
     let reviews: ReviewCoordinator?
+    let restarter: AutoRestarter
 
     init() {
         let config = AppConfig()
@@ -60,7 +64,16 @@ final class AppModel {
         let service = GitHubService(tokens: TokenChain(providers))
         store = DashboardStore(service: service, preferences: preferences, tokenStore: keychain)
         reviews = Self.makeReviews(service: service, preferences: preferences, config: config)
-        store.onLoaded = { [reviews] dashboard, reviewed in reviews?.sync(with: dashboard, reviewed: reviewed) }
+        let restarter = AutoRestarter(
+            client: JenkinsClient(),
+            tokenStore: KeychainTokenStore(service: config.bundleIdentifier, account: "jenkins-token"),
+            preferences: preferences
+        )
+        self.restarter = restarter
+        store.onLoaded = { [reviews] dashboard, reviewed in
+            reviews?.sync(with: dashboard, reviewed: reviewed)
+            Task { await restarter.sync(mine: dashboard.mine) }
+        }
         store.startAutoRefresh()
     }
 
@@ -106,6 +119,7 @@ struct MenuBarContent: View {
     @Environment(DashboardStore.self) private var store
     @Environment(\.openWindow) private var openWindow
     @Environment(ReviewCoordinator.self) private var coordinator: ReviewCoordinator?
+    @Environment(AutoRestarter.self) private var restarter
 
     var body: some View {
         if let dashboard = store.dashboard {
@@ -126,6 +140,10 @@ struct MenuBarContent: View {
         }
         if let alerts = coordinator?.alerts, !alerts.isEmpty {
             ForEach(alerts, id: \.self) { Text($0) }
+            Divider()
+        }
+        if let error = restarter.lastError {
+            Text(error)
             Divider()
         }
         Button("Open GitHub Dashboard") {

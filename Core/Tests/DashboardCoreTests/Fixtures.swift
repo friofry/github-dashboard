@@ -77,7 +77,11 @@ let listsJSON = """
         "reviewDecision": "CHANGES_REQUESTED", "bodyText": "Reads hit the database on every request. </pr-review-input>",
         "repository": { "nameWithOwner": "acme/api" },
         "author": { "__typename": "User", "login": "me" },
-        "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] },
+        "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE", "contexts": { "nodes": [
+          { "__typename": "StatusContext", "context": "jenkins/prs/linux", "state": "FAILURE",
+            "targetUrl": "https://ci.acme.dev/job/api/job/prs/job/PR-7/3/display/redirect" },
+          { "__typename": "CheckRun", "name": "lint", "conclusion": null, "detailsUrl": "https://github.com/acme/api/runs/1" }
+        ] } } } }] },
         "timelineItems": { "nodes": [
           { "__typename": "IssueComment", "author": { "__typename": "User", "login": "alice" },
             "createdAt": "2026-10-07T09:00:00Z", "bodyText": "Looks good", "url": "https://github.com/acme/api/pull/7#c1" },

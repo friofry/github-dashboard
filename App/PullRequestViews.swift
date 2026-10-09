@@ -20,13 +20,24 @@ struct PullRequestList: View {
 
 struct PullRequestRow: View {
     @Environment(DashboardStore.self) private var store
+    @Environment(AutoRestarter.self) private var restarter
     @Environment(\.openURL) private var openURL
     let pullRequest: PullRequest
     let showsAuthor: Bool
 
     var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            link
+            // Only my own pull requests: restarting someone else's CI is theirs to decide.
+            if !showsAuthor { restartToggle.padding(.top, 2) }
+        }
+        .padding(.vertical, 3)
+    }
+
+    @ViewBuilder private var link: some View {
         let events = store.events(for: pullRequest)
         let newCount = events.filter(store.isNew).count
+        let restarts = showsAuthor ? 0 : restarter.restarts(for: pullRequest)
 
         Button {
             if let url = store.visit(pullRequest) { openURL(url) }
@@ -43,6 +54,9 @@ struct PullRequestRow: View {
                         Text("\(pullRequest.repository.nameWithOwner) #\(pullRequest.number)")
                         if showsAuthor, let author = pullRequest.author { Text("· @\(author.login)") }
                         Text("· \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
+                        if restarts > 0 {
+                            Text("· CI restarted \(restarts)×").foregroundStyle(.orange)
+                        }
                     }
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -60,7 +74,23 @@ struct PullRequestRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .padding(.vertical, 3)
+    }
+
+    private var restartToggle: some View {
+        let isOn = restarter.isEnabled(pullRequest)
+        return Button {
+            restarter.setEnabled(pullRequest, !isOn)
+        } label: {
+            Image(systemName: isOn ? "arrow.clockwise.circle.fill" : "arrow.clockwise.circle")
+                .foregroundStyle(isOn ? Color.accentColor : .secondary)
+        }
+        .buttonStyle(.borderless)
+        .disabled(restarter.restartAll)
+        .help(restarter.restartAll
+            ? "Failed Jenkins jobs restart for all your pull requests (Settings)"
+            : isOn ? "Failed Jenkins jobs restart on their own. Click to stop." : "Restart failed Jenkins jobs on their own")
+        .accessibilityLabel("Auto-restart failed jobs")
+        .accessibilityValue(isOn ? "On" : "Off")
     }
 
     @ViewBuilder private var decisionBadge: some View {

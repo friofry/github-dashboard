@@ -68,10 +68,12 @@ public struct KeychainError: LocalizedError {
 
 public struct KeychainTokenStore: TokenStore {
     private let service: String
-    private let account = "github-token"
+    private let account: String
 
-    public init(service: String) {
+    /// - Parameter account: one item per secret; the GitHub token is the default.
+    public init(service: String, account: String = "github-token") {
         self.service = service
+        self.account = account
     }
 
     private var query: [String: Any] {

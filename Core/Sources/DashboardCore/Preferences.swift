@@ -41,7 +41,7 @@ public protocol PreferencesStore: AnyObject {
     var seen: [String: Date] { get set }
 }
 
-public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences {
+public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences, RestartPreferences {
     private let defaults: UserDefaults
     private let config: AppConfig
 
@@ -109,9 +109,47 @@ public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences 
         get { defaults.stringArray(forKey: "reviewQueue") ?? [] }
         set { defaults.set(newValue, forKey: "reviewQueue") }
     }
+
+    public var autoRestartAll: Bool {
+        get { defaults.bool(forKey: "autoRestartAll") }
+        set { defaults.set(newValue, forKey: "autoRestartAll") }
+    }
+
+    public var autoRestartPullRequests: [String] {
+        get { defaults.stringArray(forKey: "autoRestartPullRequests") ?? [] }
+        set { defaults.set(newValue, forKey: "autoRestartPullRequests") }
+    }
+
+    public var jenkinsServer: String {
+        get { defaults.string(forKey: "jenkinsServer") ?? "" }
+        set { defaults.set(newValue, forKey: "jenkinsServer") }
+    }
+
+    public var jenkinsUser: String {
+        get { defaults.string(forKey: "jenkinsUser") ?? "" }
+        set { defaults.set(newValue, forKey: "jenkinsUser") }
+    }
+
+    public var autoRestartChecks: String {
+        get { defaults.string(forKey: "autoRestartChecks") ?? "" }
+        set { defaults.set(newValue, forKey: "autoRestartChecks") }
+    }
+
+    public var autoRestartLimit: Int {
+        get { defaults.object(forKey: "autoRestartLimit") as? Int ?? 2 }
+        set { defaults.set(newValue, forKey: "autoRestartLimit") }
+    }
+
+    public var restartAttempts: [String: AutoRestartPolicy.Attempt] {
+        get {
+            guard let data = defaults.data(forKey: "restartAttempts") else { return [:] }
+            return (try? JSONDecoder().decode([String: AutoRestartPolicy.Attempt].self, from: data)) ?? [:]
+        }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "restartAttempts") }
+    }
 }
 
-public final class InMemoryPreferences: PreferencesStore, ReviewPreferences {
+public final class InMemoryPreferences: PreferencesStore, ReviewPreferences, RestartPreferences {
     public var orgs: String
     public var ignoredLogins: String
     public var seen: [String: Date]
@@ -124,6 +162,13 @@ public final class InMemoryPreferences: PreferencesStore, ReviewPreferences {
     public var reviewBaseline: [String]?
     public var reviewDone: [String: Date] = [:]
     public var reviewQueue: [String] = []
+    public var autoRestartAll = false
+    public var autoRestartPullRequests: [String] = []
+    public var jenkinsServer = ""
+    public var jenkinsUser = ""
+    public var autoRestartChecks = ""
+    public var autoRestartLimit = 2
+    public var restartAttempts: [String: AutoRestartPolicy.Attempt] = [:]
 
     public init(orgs: String = "", ignoredLogins: String = "", seen: [String: Date] = [:]) {
         self.orgs = orgs
