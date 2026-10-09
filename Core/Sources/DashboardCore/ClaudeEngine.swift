@@ -140,6 +140,9 @@ public struct ClaudeCLI: ReviewEngine {
             process.standardError = FileHandle.nullDevice
             var environment = ProcessInfo.processInfo.environment
             environment["PATH"] = "/opt/homebrew/bin:/usr/local/bin:" + (environment["PATH"] ?? "/usr/bin:/bin")
+            // Claude has no use for the GitHub token, so it does not get one.
+            environment["GH_TOKEN"] = nil
+            environment["GITHUB_TOKEN"] = nil
             process.environment = environment
             try process.run()
 
