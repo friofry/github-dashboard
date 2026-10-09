@@ -13,7 +13,7 @@ struct SettingsView: View {
         Form {
             Section {
                 LabeledContent("Status", value: tokenStatus)
-                SecureField("Personal access token", text: $newToken)
+                SecureField("Personal access token", text: $newToken, prompt: Text("paste it here"))
                 HStack {
                     Button("Save to Keychain") {
                         let value = newToken
@@ -105,7 +105,8 @@ struct AutoRestartSection: View {
             TextField("Jenkins address", text: $restarter.server, prompt: Text("https://ci.example.com"))
             TextField("Jenkins user", text: $restarter.user, prompt: Text("your Jenkins login"))
             LabeledContent("API token", value: restarter.hasToken ? "Saved in Keychain" : "Not set")
-            SecureField("New API token", text: $newToken)
+            // Without a prompt the empty field is only a few points wide, and a click on the row misses it.
+            SecureField("New API token", text: $newToken, prompt: Text("paste it here"))
             HStack {
                 Button("Save to Keychain") {
                     let value = newToken
