@@ -3,148 +3,200 @@ import SwiftUI
 
 // MARK: - Reviews
 
+/// Three columns, like a mail client: pull requests, the findings of the selected one, one finding in full.
 struct ClaudeReviewsView: View {
     @Environment(DashboardStore.self) private var store
     let coordinator: ReviewCoordinator
     let dashboard: Dashboard
     @State private var showsDone = false
+    @State private var selectedPullRequest: String?
+    @State private var selectedFinding: String?
+
+    private var all: [PullRequest] { dashboard.reviews + dashboard.mine }
+    private var current: PullRequest? { all.first { $0.id == selectedPullRequest } }
+
+    private func visible(_ pullRequests: [PullRequest]) -> [PullRequest] {
+        store.sorted(pullRequests.filter { showsDone || !coordinator.isDone($0) })
+    }
 
     var body: some View {
-        let doneCount = (dashboard.reviews + dashboard.mine).filter(coordinator.isDone).count
-        List {
-            if doneCount > 0 {
-                Toggle("Show \(doneCount) done", isOn: $showsDone)
+        HStack(spacing: 0) {
+            pullRequestColumn.frame(width: 250)
+            Divider()
+            if let current {
+                FindingColumn(coordinator: coordinator, pullRequest: current, selection: $selectedFinding)
+                    .frame(width: 280)
+                Divider()
+                detail(for: current).frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ContentUnavailableView("Select a pull request", systemImage: "sparkles",
+                                       description: Text("Its findings appear here."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            if !coordinator.pending.isEmpty {
+        }
+        .onAppear {
+            if current == nil { selectedPullRequest = (visible(dashboard.reviews) + visible(dashboard.mine)).first?.id }
+            selectFirstFinding()
+        }
+        .onChange(of: selectedPullRequest) { selectFirstFinding() }
+        // A review that finishes while its pull request is open should show its first finding straight away.
+        .onChange(of: current.flatMap { coordinator.reviews[$0.id]?.pr?.reviewedAt }) { selectFirstFinding() }
+    }
+
+    private func selectFirstFinding() {
+        let findings = current.flatMap { coordinator.reviews[$0.id]?.sortedFindings } ?? []
+        if !findings.contains(where: { $0.id == selectedFinding }) { selectedFinding = findings.first?.id }
+    }
+
+    private var pullRequestColumn: some View {
+        let doneCount = all.filter(coordinator.isDone).count
+        return VStack(spacing: 0) {
+            List(selection: $selectedPullRequest) {
+                section("Awaiting my review", visible(dashboard.reviews))
+                section("My pull requests", visible(dashboard.mine))
+            }
+            if !coordinator.pending.isEmpty || doneCount > 0 {
+                Divider()
                 HStack {
-                    Text("\(coordinator.pending.count) review requests have no review of their latest commit.")
-                        .foregroundStyle(.secondary)
+                    if !coordinator.pending.isEmpty {
+                        Button("Review all (\(coordinator.pending.count))") { coordinator.requestAllPending() }
+                            .help("Review every request that has no review of its latest commit")
+                    }
                     Spacer()
-                    Button("Review all") { coordinator.requestAllPending() }
+                    if doneCount > 0 {
+                        Toggle("Done (\(doneCount))", isOn: $showsDone)
+                            #if os(macOS)
+                            .toggleStyle(.checkbox)
+                            #endif
+                    }
                 }
+                .controlSize(.small)
+                .padding(8)
             }
-            section("Awaiting my review", dashboard.reviews)
-            section("My pull requests", dashboard.mine)
         }
     }
 
     @ViewBuilder private func section(_ title: String, _ pullRequests: [PullRequest]) -> some View {
-        let visible = pullRequests.filter { showsDone || !coordinator.isDone($0) }
-        if !visible.isEmpty {
+        if !pullRequests.isEmpty {
             Section(title) {
-                ForEach(store.sorted(visible)) { pullRequest in
-                    ReviewRow(coordinator: coordinator, pullRequest: pullRequest)
+                ForEach(pullRequests) { pullRequest in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(pullRequest.title).lineLimit(1)
+                        Text("\(pullRequest.repository.nameWithOwner.split(separator: "/").last ?? "") #\(pullRequest.number) · \(state(of: pullRequest))")
+                            .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    .opacity(coordinator.isDone(pullRequest) ? 0.55 : 1)
+                    .tag(pullRequest.id)
                 }
             }
         }
     }
+
+    private func state(of pullRequest: PullRequest) -> String {
+        let counts = coordinator.reviews[pullRequest.id].map { review -> String in
+            let parts = Finding.Severity.allCases.compactMap { severity -> String? in
+                let count = review.findings.filter { $0.severity == severity }.count
+                return count > 0 ? "\(count) \(severity.rawValue)" : nil
+            }
+            return parts.isEmpty ? "no findings" : parts.joined(separator: ", ")
+        }
+        switch coordinator.status(for: pullRequest) {
+        case .none: return "not reviewed"
+        case .working(.queued): return "queued"
+        case .working(.reviewing): return "reviewing…"
+        case .working(.teaching): return "writing lesson…"
+        case .current: return counts ?? ""
+        case .outdated: return "\(counts ?? "") · new commits"
+        case .failed: return "failed"
+        }
+    }
+
+    @ViewBuilder private func detail(for pullRequest: PullRequest) -> some View {
+        let review = coordinator.reviews[pullRequest.id]
+        if let finding = review?.findings.first(where: { $0.id == selectedFinding }) {
+            FindingDetail(coordinator: coordinator, pullRequest: pullRequest, finding: finding)
+        } else if let review, review.findings.isEmpty {
+            ContentUnavailableView("No findings", systemImage: "checkmark.seal", description: Text(review.summary))
+        } else {
+            ContentUnavailableView("Select a finding", systemImage: "text.magnifyingglass")
+        }
+    }
 }
 
-struct ReviewRow: View {
+/// Middle column: the findings of one pull request and the actions on the pull request itself.
+struct FindingColumn: View {
     @Environment(\.openURL) private var openURL
     let coordinator: ReviewCoordinator
     let pullRequest: PullRequest
-    @State private var isExpanded = false
+    @Binding var selection: String?
 
     var body: some View {
-        let review = coordinator.reviews[pullRequest.id]
-        DisclosureGroup(isExpanded: $isExpanded) {
-            if let review {
-                Text(review.summary).font(.callout).foregroundStyle(.secondary).padding(.vertical, 2)
-                ForEach(review.sortedFindings) { finding in
-                    FindingCard(coordinator: coordinator, pullRequest: pullRequest, finding: finding)
+        VStack(spacing: 0) {
+            if let review = coordinator.reviews[pullRequest.id] {
+                List(selection: $selection) {
+                    Section {
+                        ForEach(review.sortedFindings) { finding in
+                            HStack(alignment: .top, spacing: 8) {
+                                Circle().fill(finding.severity.color).frame(width: 8, height: 8).padding(.top, 5)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(finding.title).lineLimit(2)
+                                    Text(finding.postedURL == nil
+                                        ? "\(finding.category.rawValue) · \(finding.path.split(separator: "/").last ?? ""):\(finding.line)"
+                                        : "\(finding.category.rawValue) · published")
+                                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                }
+                            }
+                            .tag(finding.id)
+                        }
+                    } header: {
+                        Text(review.summary).font(.caption).textCase(nil).lineLimit(5).padding(.bottom, 4)
+                    }
                 }
             } else {
-                Text("Not reviewed yet.").font(.callout).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button("Open pull request", systemImage: "arrow.up.right.square") { openURL(pullRequest.url) }
-                Spacer()
-                doneButton
-            }
-            .padding(.vertical, 4)
-        } label: {
-            HStack(spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(pullRequest.title).lineLimit(1)
-                    Text("\(pullRequest.repository.nameWithOwner) #\(pullRequest.number)")
-                        .font(.caption).foregroundStyle(.secondary)
+                ContentUnavailableView {
+                    Label("Not reviewed yet", systemImage: "sparkles")
+                } description: {
+                    if case .failed(let message) = coordinator.status(for: pullRequest) { Text(message) }
                 }
-                Spacer()
-                if let review { SeverityCounts(findings: review.findings) }
-                status
-                if let lesson = coordinator.lessons[pullRequest.id] {
-                    Button("Lesson", systemImage: "graduationcap") { openURL(lesson) }
-                        .labelStyle(.iconOnly).help("Open the lesson for this pull request")
-                }
-                action
-                doneButton.labelStyle(.iconOnly)
+                .frame(maxHeight: .infinity)
             }
-            // The whole row opens and closes the findings, not just the small arrow.
-            .contentShape(Rectangle())
-            .onTapGesture { withAnimation { isExpanded.toggle() } }
-            .opacity(coordinator.isDone(pullRequest) ? 0.55 : 1)
+            Divider()
+            actions.controlSize(.small).padding(8)
         }
     }
 
-    @ViewBuilder private var doneButton: some View {
-        if coordinator.isDone(pullRequest) {
-            Button("Mark as not done", systemImage: "arrow.uturn.backward.circle") {
-                coordinator.setDone(pullRequest, false)
-            }
-            .help("Bring this pull request back")
-        } else {
-            Button("Mark as done", systemImage: "checkmark.circle") {
-                withAnimation { coordinator.setDone(pullRequest, true) }
-            }
-            .help("Hide until there is new activity in this pull request")
-        }
-    }
-
-    @ViewBuilder private var status: some View {
-        switch coordinator.status(for: pullRequest) {
-        case .none: EmptyView()
-        case .working(let phase):
-            HStack(spacing: 4) {
+    private var actions: some View {
+        HStack(spacing: 6) {
+            switch coordinator.status(for: pullRequest) {
+            case .working(let phase):
                 ProgressView().controlSize(.small)
-                Text(phase == .queued ? "Queued" : phase == .reviewing ? "Reviewing" : "Writing lesson")
+                Text(phase == .queued ? "Queued" : phase == .reviewing ? "Reviewing…" : "Writing lesson…")
                     .font(.caption).foregroundStyle(.secondary)
+            case .none: Button("Review") { coordinator.request(pullRequest) }
+            case .current: Button("Re-review") { coordinator.request(pullRequest) }
+            case .outdated: Button("Re-review new commits") { coordinator.request(pullRequest) }
+            case .failed: Button("Retry") { coordinator.request(pullRequest) }
             }
-        case .current: EmptyView()
-        case .outdated: Badge(text: "New commits", color: .orange)
-        case .failed(let message):
-            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.red).help(message)
-        }
-    }
-
-    @ViewBuilder private var action: some View {
-        switch coordinator.status(for: pullRequest) {
-        case .working: EmptyView()
-        case .none: Button("Review") { coordinator.request(pullRequest) }
-        case .current, .outdated: Button("Re-review") { coordinator.request(pullRequest) }
-        case .failed: Button("Retry") { coordinator.request(pullRequest) }
-        }
-    }
-}
-
-struct SeverityCounts: View {
-    let findings: [Finding]
-
-    var body: some View {
-        if findings.isEmpty {
-            Badge(text: "No findings", color: .green)
-        } else {
-            HStack(spacing: 4) {
-                ForEach(Finding.Severity.allCases, id: \.self) { severity in
-                    let count = findings.filter { $0.severity == severity }.count
-                    if count > 0 { Badge(text: "\(count) \(severity.rawValue)", color: severity.color) }
-                }
+            Spacer()
+            if let lesson = coordinator.lessons[pullRequest.id] {
+                Button("Lesson", systemImage: "graduationcap") { openURL(lesson) }
+                    .labelStyle(.iconOnly).help("Open the lesson for this pull request")
+            }
+            Button("Open pull request", systemImage: "arrow.up.right.square") { openURL(pullRequest.url) }
+                .labelStyle(.iconOnly).help("Open the pull request on GitHub")
+            if coordinator.isDone(pullRequest) {
+                Button("Not done", systemImage: "arrow.uturn.backward.circle") { coordinator.setDone(pullRequest, false) }
+                    .help("Bring this pull request back")
+            } else {
+                Button("Done", systemImage: "checkmark.circle") { coordinator.setDone(pullRequest, true) }
+                    .help("Hide until there is new activity in this pull request")
             }
         }
     }
 }
 
-struct FindingCard: View {
+/// Right column: one finding in full, with the comment and its Publish button.
+struct FindingDetail: View {
     @Environment(\.openURL) private var openURL
     let coordinator: ReviewCoordinator
     let pullRequest: PullRequest
@@ -154,53 +206,58 @@ struct FindingCard: View {
     var body: some View {
         let link = coordinator.link(for: finding, in: pullRequest)
         let key = ReviewCoordinator.key(finding, in: pullRequest)
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Badge(text: finding.severity.rawValue, color: finding.severity.color)
-                Badge(text: finding.category.rawValue, color: .secondary)
-                Text(finding.title).fontWeight(.semibold)
-            }
-            Button {
-                if let link { openURL(link) }
-            } label: {
-                Label(location, systemImage: "arrow.up.right.square").font(.caption.monospaced())
-            }
-            .buttonStyle(.borderless)
-            .tint(.blue)
-            .disabled(link == nil)
-
-            Text(finding.problem)
-            if let example = finding.example, !example.isEmpty {
-                labelled("Example", example)
-            }
-            labelled("Fix", finding.suggestion)
-
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text("Comment to post").font(.caption).foregroundStyle(.secondary)
-                    Spacer()
-                    if let posted = finding.postedURL {
-                        Button("Published", systemImage: "checkmark.circle.fill") { openURL(posted) }
-                            .controlSize(.small).tint(.green).help("Open the comment on GitHub")
-                    } else if coordinator.publishing.contains(key) {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        Button("Publish", systemImage: "paperplane") { confirmsPublish = true }.controlSize(.small)
+        ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Badge(text: finding.severity.rawValue, color: finding.severity.color)
+                    Badge(text: finding.category.rawValue, color: .secondary)
+                    Button {
+                        if let link { openURL(link) }
+                    } label: {
+                        Label(location, systemImage: "arrow.up.right.square").font(.caption.monospaced()).lineLimit(1)
                     }
-                    Button("Copy", systemImage: "doc.on.doc") { copy(finding.comment) }.controlSize(.small)
+                    .buttonStyle(.borderless)
+                    .tint(.blue)
+                    .disabled(link == nil)
+                    .help("Open this line on GitHub")
                 }
-                if let error = coordinator.publishErrors[key] {
-                    Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                Text(finding.title).font(.title3.weight(.semibold)).textSelection(.enabled)
+                Text(finding.problem).textSelection(.enabled)
+                if let example = finding.example, !example.isEmpty {
+                    labelled("Example", example)
                 }
-                Text(finding.comment)
-                    .font(.callout.monospaced())
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(8)
-                    .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                labelled("Fix", finding.suggestion)
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Comment to post").font(.caption).foregroundStyle(.secondary)
+                    Text(finding.comment)
+                        .font(.callout.monospaced())
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10)
+                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
+                    HStack {
+                        if let posted = finding.postedURL {
+                            Button("Published", systemImage: "checkmark.circle.fill") { openURL(posted) }
+                                .tint(.green).help("Open the comment on GitHub")
+                        } else if coordinator.publishing.contains(key) {
+                            ProgressView().controlSize(.small)
+                        } else {
+                            Button("Publish", systemImage: "paperplane") { confirmsPublish = true }
+                                .buttonStyle(.borderedProminent)
+                        }
+                        Button("Copy", systemImage: "doc.on.doc") { copy(finding.comment) }
+                    }
+                    if let error = coordinator.publishErrors[key] {
+                        Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                    }
+                }
+                .padding(.top, 4)
             }
+            .frame(maxWidth: 640, alignment: .leading)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
-        .padding(.vertical, 6)
         // Posting is public and cannot be taken back from here, so it always asks first.
         .confirmationDialog("Publish this comment?", isPresented: $confirmsPublish) {
             Button("Publish to \(pullRequest.repository.nameWithOwner) #\(pullRequest.number)") {
@@ -218,7 +275,10 @@ struct FindingCard: View {
     }
 
     private func labelled(_ label: String, _ text: String) -> some View {
-        (Text("\(label): ").foregroundStyle(.secondary) + Text(text)).font(.callout).textSelection(.enabled)
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(text).textSelection(.enabled)
+        }
     }
 
     private func copy(_ text: String) {

@@ -54,7 +54,8 @@ for you. Open **Claude reviews**, press **Review**, and each finding shows:
 - a comment ready to post: **Publish** puts it on that line of the pull request under your account, after you
   confirm; **Copy** if you would rather paste it yourself
 
-Click a pull request to open its findings. **Mark as done** hides it until there is new activity in it.
+The pane has three columns: pull requests, the findings of the selected one, and one finding in full; the
+arrow keys move through them. **Done** hides a pull request until there is new activity in it.
 
 Nothing is posted to GitHub unless you press Publish. Publishing needs a token that may write to the
 repository; a read-only token is enough for everything else. In Settings you can also:

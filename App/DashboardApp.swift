@@ -12,7 +12,7 @@ struct DashboardApp: App {
             RootView()
                 .environment(store)
                 .environment(model.reviews)
-                .frame(minWidth: 820, minHeight: 520)
+                .frame(minWidth: 1040, minHeight: 560)
         }
 
         MenuBarExtra {
