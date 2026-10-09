@@ -91,8 +91,14 @@ the form, and the app builds every link itself.
 
 Flaky CI does not have to mean pressing Restart by hand. In **Settings → Auto-restart failed CI** enter the Jenkins
 address (e.g. `https://ci.example.com`), your Jenkins user and an API token (Jenkins → your name → Security → API
-Token; it is kept in the Keychain). Then press ↻ next to any pull request in **My PRs**, or switch on **All my pull
-requests**.
+Token; it is kept in the Keychain). Then switch on **Auto-restart failed jobs** above **My PRs**.
+
+Every row of **My PRs** draws the head commit's checks as a bar: passed, restarting, running and failed. Click a
+pull request to open its checks beside the list: a **Restart** button for each failed Jenkins job, a switch for that
+pull request alone, and the history of what was restarted and how it ended. Double-click (or ⌘↩) opens the pull
+request on GitHub. **Which jobs restart…** in that panel lists every Jenkins job seen on your pull requests with how
+many restarted runs then passed and a switch per job, so a job that is really broken can be left alone. The counts
+above the list narrow it to the pull requests with failed, running, restarted or given-up checks.
 
 On each refresh the app looks at the head commit's checks. A check that failed and links to that Jenkins is started
 again through `buildWithParameters` (or `build` for a job without parameters):
@@ -100,7 +106,7 @@ again through `buildWithParameters` (or `build` for a job without parameters):
 - only your own pull requests, and only checks on the Jenkins you entered, so the token never goes anywhere else
 - at most 2 restarts per check per commit (1 to 5 in Settings); a new commit starts the count again
 - one restart per failed run: while GitHub still shows that run, the restart is on its way
-- **Only these checks** narrows it down by name or prefix, e.g. `jenkins/prs/linux`
+- a restart pressed by hand does not use up the automatic ones
 
 ## Notifications
 

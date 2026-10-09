@@ -13,7 +13,7 @@ struct SettingsView: View {
         Form {
             Section {
                 LabeledContent("Status", value: tokenStatus)
-                SecureField("Personal access token", text: $newToken)
+                SecureField("Personal access token", text: $newToken, prompt: Text("paste it here"))
                 HStack {
                     Button("Save to Keychain") {
                         let value = newToken
@@ -107,7 +107,8 @@ struct AutoRestartSection: View {
             TextField("Jenkins address", text: $restarter.server, prompt: Text("https://ci.example.com"))
             TextField("Jenkins user", text: $restarter.user, prompt: Text("your Jenkins login"))
             LabeledContent("API token", value: restarter.hasToken ? "Saved in Keychain" : "Not set")
-            SecureField("New API token", text: $newToken)
+            // Without a prompt the empty field is only a few points wide, and a click on the row misses it.
+            SecureField("New API token", text: $newToken, prompt: Text("paste it here"))
             HStack {
                 Button("Save to Keychain") {
                     let value = newToken
@@ -120,7 +121,6 @@ struct AutoRestartSection: View {
                 }
             }
             Toggle("All my pull requests", isOn: $restarter.restartAll)
-            TextField("Only these checks", text: $restarter.checks, prompt: Text("every Jenkins check"))
             Stepper("Up to \(restarter.limit) restart\(restarter.limit == 1 ? "" : "s") per check per commit",
                     value: $restarter.limit, in: 1...5)
             if let error = restarter.lastError {
@@ -137,10 +137,10 @@ struct AutoRestartSection: View {
             Text("Auto-restart failed CI")
         } footer: {
             Text("""
-            Switch it on per pull request with the ↻ button in My PRs, or here for all of them. Only failed checks \
-            that link to this Jenkins are restarted; a new commit starts the count again. Make the API token in \
-            Jenkins under your name → Security (or Configure) → API Token. Comma separate check names or prefixes, \
-            e.g. jenkins/prs/linux.
+            The same switch sits above My PRs; click a pull request there to see its checks, restart one by hand, \
+            switch that pull request on or off, and choose which jobs restart. Only failed checks that link to this Jenkins are \
+            restarted; a new commit starts the count again. Make the API token in Jenkins under your name → \
+            Security (or Configure) → API Token.
             """)
         }
         #if os(iOS)
