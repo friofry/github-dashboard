@@ -26,6 +26,14 @@ struct AutoRestartStrip: View {
                         .controlSize(.small)
                         .help("Start every failed Jenkins job of my pull requests again now")
                     }
+                    if restarter.serverURL == nil || !restarter.hasToken || restarter.user.isEmpty {
+                        // Without the sign-in nothing can be restarted, so say where it goes.
+                        #if os(macOS)
+                        SettingsLink { Text("Set up Jenkins…") }.controlSize(.small)
+                        #else
+                        Text("Set up Jenkins in Settings").font(.caption).foregroundStyle(.secondary)
+                        #endif
+                    }
                 }
                 .padding(.horizontal, 12)
             }
@@ -36,6 +44,7 @@ struct AutoRestartStrip: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.quaternary.opacity(0.5))
+        .task { await restarter.checkToken() }
     }
 
     @ViewBuilder private func chip(_ kind: AutoRestarter.Filter) -> some View {
