@@ -153,7 +153,8 @@ struct ClaudeReviewsView: View {
     @ViewBuilder private func detail(for pullRequest: PullRequest) -> some View {
         let review = coordinator.reviews[pullRequest.id]
         if let finding = review?.findings.first(where: { $0.id == selectedFinding }) {
-            FindingDetail(coordinator: coordinator, pullRequest: pullRequest, finding: finding)
+            FindingDetail(coordinator: coordinator, pullRequest: pullRequest, finding: finding,
+                          selection: $selectedFinding)
         } else if let review, review.findings.isEmpty {
             ContentUnavailableView("No findings", systemImage: "checkmark.seal", description: Text(review.summary))
         } else {
@@ -231,102 +232,6 @@ struct FindingColumn: View {
                     .help("Hide until there is new activity in this pull request")
             }
         }
-    }
-}
-
-/// Right column: one finding in full, with the comment and its Publish button.
-struct FindingDetail: View {
-    @Environment(\.openURL) private var openURL
-    let coordinator: ReviewCoordinator
-    let pullRequest: PullRequest
-    let finding: Finding
-    @State private var confirmsPublish = false
-
-    var body: some View {
-        let link = coordinator.link(for: finding, in: pullRequest)
-        let key = ReviewCoordinator.key(finding, in: pullRequest)
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(spacing: 6) {
-                    Badge(text: finding.severity.rawValue, color: finding.severity.color)
-                    Badge(text: finding.category.rawValue, color: .secondary)
-                    Button {
-                        if let link { openURL(link) }
-                    } label: {
-                        Label(location, systemImage: "arrow.up.right.square").font(.caption.monospaced()).lineLimit(1)
-                    }
-                    .buttonStyle(.borderless)
-                    .tint(.blue)
-                    .disabled(link == nil)
-                    .help("Open this line on GitHub")
-                }
-                Text(finding.title).font(.title3.weight(.semibold)).textSelection(.enabled)
-                Text(finding.problem).textSelection(.enabled)
-                if let example = finding.example, !example.isEmpty {
-                    labelled("Example", example)
-                }
-                labelled("Fix", finding.suggestion)
-
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Comment to post").font(.caption).foregroundStyle(.secondary)
-                    Text(finding.comment)
-                        .font(.callout.monospaced())
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(10)
-                        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 6))
-                    HStack {
-                        if let posted = finding.postedURL {
-                            Button("Published", systemImage: "checkmark.circle.fill") { openURL(posted) }
-                                .tint(.green).help("Open the comment on GitHub")
-                        } else if coordinator.publishing.contains(key) {
-                            ProgressView().controlSize(.small)
-                        } else {
-                            Button("Publish", systemImage: "paperplane") { confirmsPublish = true }
-                                .buttonStyle(.borderedProminent)
-                        }
-                        Button("Copy", systemImage: "doc.on.doc") { copy(finding.comment) }
-                    }
-                    if let error = coordinator.publishErrors[key] {
-                        Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
-                    }
-                }
-                .padding(.top, 4)
-            }
-            .frame(maxWidth: 640, alignment: .leading)
-            .padding(20)
-            .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        // Posting is public and cannot be taken back from here, so it always asks first.
-        .confirmationDialog("Publish this comment?", isPresented: $confirmsPublish) {
-            Button("Publish to \(pullRequest.repository.nameWithOwner) #\(pullRequest.number)") {
-                Task { await coordinator.publish(finding, in: pullRequest) }
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("It will be posted under your GitHub account on \(location).")
-        }
-    }
-
-    private var location: String {
-        let range = finding.endLine.map { $0 > finding.line ? "\(finding.line)-\($0)" : "\(finding.line)" } ?? "\(finding.line)"
-        return "\(finding.path):\(range)"
-    }
-
-    private func labelled(_ label: String, _ text: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label).font(.caption).foregroundStyle(.secondary)
-            Text(text).textSelection(.enabled)
-        }
-    }
-
-    private func copy(_ text: String) {
-        #if os(macOS)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
-        #else
-        UIPasteboard.general.string = text
-        #endif
     }
 }
 

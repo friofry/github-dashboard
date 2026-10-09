@@ -61,6 +61,7 @@ public final class ReviewCoordinator {
     /// Findings being published right now, and the last error per finding, keyed by PR id and finding id.
     public private(set) var publishing: Set<String> = []
     public private(set) var publishErrors: [String: String] = [:]
+    @ObservationIgnored private var diffs: [String: ParsedDiff] = [:]
     private var working: [String: Phase] = [:]
     private var failures: [String: String] = [:]
     /// "id@sha" of automatic attempts, so a failing review is not retried on every refresh.
@@ -190,6 +191,26 @@ public final class ReviewCoordinator {
         }
     }
 
+    /// The reviewed diff of a pull request, for showing code next to a finding. Read once and kept.
+    public func diff(for pullRequest: PullRequest) -> ParsedDiff? {
+        if let cached = diffs[pullRequest.id] { return cached }
+        let loaded = workspace.loadDiff(repo: pullRequest.repository.nameWithOwner, number: pullRequest.number)
+        diffs[pullRequest.id] = loaded
+        return loaded
+    }
+
+    /// Replaces the text that Publish will post. A published comment can no longer be changed from here.
+    public func setComment(_ text: String, for finding: Finding, in pullRequest: PullRequest) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, var review = reviews[pullRequest.id],
+              let index = review.findings.firstIndex(where: { $0.id == finding.id }),
+              review.findings[index].postedURL == nil
+        else { return }
+        review.findings[index].comment = trimmed
+        reviews[pullRequest.id] = review
+        try? workspace.save(review, repo: pullRequest.repository.nameWithOwner, number: pullRequest.number)
+    }
+
     public static func key(_ finding: Finding, in pullRequest: PullRequest) -> String {
         "\(pullRequest.id)|\(finding.id)"
     }
@@ -236,6 +257,7 @@ public final class ReviewCoordinator {
             working[pullRequest.id] = .reviewing
             let diff = DiffAnnotator.annotate(try await source.fetchDiff(repo: repo, number: pullRequest.number))
             try workspace.writeInputs(pullRequest: pullRequest, diff: diff)
+            diffs[pullRequest.id] = nil
 
             let input = ReviewInput.make(pullRequest: pullRequest, language: language, diff: diff)
             var (review, spent) = try await engine.review(input: input, schema: try skill.schema(), options: options)

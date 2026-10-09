@@ -55,6 +55,39 @@ final class DiffAnnotatorTests: XCTestCase {
     }
 }
 
+final class DiffReadingTests: XCTestCase {
+    private let parsed = ParsedDiff(annotated: DiffAnnotator.annotate(sampleDiff).text)
+
+    func testReadsFilesBackFromTheSavedDiff() throws {
+        XCTAssertEqual(parsed.files.map(\.path), ["api/users.go", "old.txt"])
+        let file = try XCTUnwrap(parsed.file("api/users.go"))
+        XCTAssertEqual(file.added, 2)
+        XCTAssertEqual(file.removed, 1)
+        XCTAssertEqual(file.lastLine, 13)
+        XCTAssertEqual(file.changedRanges, [11...12])
+        XCTAssertEqual(file.lines.first, CodeLine(number: 10, kind: .context, text: "context"))
+        XCTAssertEqual(parsed.file("old.txt")?.lastLine, 0)
+    }
+
+    func testExcerptShowsTheLineWithContextAndNothingForLinesOutsideTheDiff() {
+        let excerpt = parsed.excerpt(path: "api/users.go", from: 12, to: 12, context: 1)
+        XCTAssertEqual(excerpt.map(\.number), [11, 12, 13])
+        XCTAssertEqual(excerpt[1].text, "added two")
+        XCTAssertTrue(parsed.excerpt(path: "api/users.go", from: 40, to: 40).isEmpty)
+        XCTAssertTrue(parsed.excerpt(path: "missing.go", from: 1, to: 1).isEmpty)
+    }
+
+    func testCommentSplitsIntoProseAndSuggestion() {
+        let comment = "`page - 1` is negative.\n\nExample: empty table.\n\n```suggestion\nif len(items) == 0 { return nil }\n```"
+        XCTAssertEqual(CommentPart.parse(comment), [
+            .text("`page - 1` is negative.\n\nExample: empty table."),
+            .code(language: "suggestion", body: "if len(items) == 0 { return nil }"),
+        ])
+        XCTAssertEqual(CommentPart.suggestion(in: comment) ?? [], ["if len(items) == 0 { return nil }"])
+        XCTAssertNil(CommentPart.suggestion(in: "Plain remark with ```go\ncode\n```"))
+    }
+}
+
 final class ReviewFormTests: XCTestCase {
     private func example() throws -> Review {
         try JSONDecoder().decode(Review.self, from: Data(contentsOf: skillDirectory.appendingPathComponent("EXAMPLE.json")))
@@ -66,6 +99,10 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertEqual(review.verdict, .requestChanges)
         XCTAssertEqual(review.sortedFindings.map(\.severity), [.high, .low])
         XCTAssertEqual(review.findings[1].endLine, 18)
+        XCTAssertEqual(review.findings[0].chain?.count, 3)
+        XCTAssertEqual(review.findings[0].impact?.harm, 3)
+        XCTAssertEqual(review.findings[0].scenario?.rows.first?.nowOk, false)
+        XCTAssertNil(review.findings[1].scenario, "the table is optional")
     }
 
     /// The schema the model answers to and the types the app decodes must name the same values.
@@ -439,6 +476,31 @@ final class ReviewCoordinatorTests: XCTestCase {
         let reloaded = makeCoordinator()
         reloaded.sync(with: dashboard)
         XCTAssertNotNil(reloaded.reviews[pullRequest.id]?.findings[0].postedURL)
+    }
+
+    func testCommentCanBeEditedUntilItIsPublished() async throws {
+        let dashboard = try decodeDashboard()
+        let pullRequest = dashboard.mine[0]
+        let coordinator = makeCoordinator()
+        coordinator.request(pullRequest)
+        await coordinator.waitUntilIdle()
+        var finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        XCTAssertNotNil(coordinator.diff(for: pullRequest)?.file("api/users.go"))
+
+        coordinator.setComment("  Shorter wording.  ", for: finding, in: pullRequest)
+        finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        XCTAssertEqual(finding.comment, "Shorter wording.")
+        coordinator.setComment("   ", for: finding, in: pullRequest)
+        XCTAssertEqual(coordinator.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.", "empty text is ignored")
+
+        await coordinator.publish(finding, in: pullRequest)
+        finding = try XCTUnwrap(coordinator.reviews[pullRequest.id]?.findings[0])
+        coordinator.setComment("Too late.", for: finding, in: pullRequest)
+        XCTAssertEqual(coordinator.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.")
+
+        let reloaded = makeCoordinator()
+        reloaded.sync(with: dashboard)
+        XCTAssertEqual(reloaded.reviews[pullRequest.id]?.findings[0].comment, "Shorter wording.")
     }
 
     func testDonePullRequestComesBackOnlyOnNewActivity() throws {

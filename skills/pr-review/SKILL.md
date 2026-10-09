@@ -16,7 +16,7 @@ There are two ways to be called.
 - **By GitHub Dashboard.** The prompt contains a `<pr-review-input>` block with the pull request's metadata
   and its diff. Each diff line starts with its line number in the new file, so use those numbers as given.
   You have no tools. Reply with the review object and nothing else. When the metadata names a `language`,
-  write `summary`, `title`, `problem`, `example` and `suggestion` in it; `comment` stays in English.
+  write everything in it except `comment`, which stays in English.
 - **By a person**, with `owner/repo#123` or a pull request URL. Fetch the input yourself:
   `gh pr view <n> --repo <owner/repo> --json number,title,url,author,baseRefName,headRefOid,body` and
   `gh pr diff <n> --repo <owner/repo>`. Work out new-file line numbers from the hunk headers. Write the
@@ -75,6 +75,19 @@ Write for a tired reader. Short sentences, plain words, no jargon the code itsel
   if len(items) == 0 { return nil }
   ```
   ````
+
+Three more fields turn the explanation into pictures the dashboard draws. Write them in the same language as
+`problem`.
+
+- `chain` - how the problem comes about, as two to four steps a reader can follow left to right. Each step has
+  a `title` of three to five words and a `detail` of one short line. The last step is the failure itself.
+- `impact` - your estimate on three scales from 1 to 3, each with a note of a few words:
+  `harm` (1 cosmetic or confusing, 2 wrong result, 3 crash, data loss or security hole),
+  `likelihood` (1 needs an unusual situation, 2 will happen in normal use, 3 happens every time),
+  `effort` to fix (1 a line or two, 2 a small change in one place, 3 a redesign or many files).
+- `scenario` - optional. Use it when one concrete situation shows the problem better than words: a `title`
+  naming the situation and two to five `rows`, each an `item` with what it is `now` and `after` the fix, and
+  whether each is right (`nowOk`, `afterOk`). Leave it out when it would only repeat `example`.
 
 `verdict` is `request_changes` when any finding is `high`, `approve` when there are none above `low`,
 otherwise `comment`.

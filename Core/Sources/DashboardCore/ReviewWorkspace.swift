@@ -29,6 +29,12 @@ public struct ReviewWorkspace: Sendable {
         try Self.encoder.encode(review).write(to: directory.appendingPathComponent("review.json"), options: .atomic)
     }
 
+    /// The annotated diff saved when the pull request was reviewed.
+    public func loadDiff(repo: String, number: Int) -> ParsedDiff? {
+        let file = directory(repo: repo, number: number).appendingPathComponent("pr.diff")
+        return (try? String(contentsOf: file, encoding: .utf8)).map(ParsedDiff.init(annotated:))
+    }
+
     /// What the lesson is built from, next to the review.
     public func writeInputs(pullRequest: PullRequest, diff: AnnotatedDiff) throws {
         let repo = pullRequest.repository.nameWithOwner

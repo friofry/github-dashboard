@@ -50,8 +50,10 @@ for you. Open **Claude reviews**, press **Review**, and each finding shows:
 
 - a severity (high, medium, low) and a category: regression, security, reliability, modularity, structure, smell
 - a link to the exact line on github.com
-- what is wrong, a failing example and a fix, in plain words
-- a comment ready to post: **Publish** puts it on that line of the pull request under your account, after you
+- what is wrong, a failing example and a fix, in plain words, and also as pictures: the steps that lead to the
+  failure, a now-and-after table, three rough scales (harm, how often, cost to fix), the code with the
+  suggested change, and a map of where the finding sits among the changed files
+- a comment shown as GitHub will render it, which you can edit first: **Publish** puts it on that line of the pull request under your account, after you
   confirm; **Copy** if you would rather paste it yourself
 
 The pane lists review requests and also the open pull requests you have already reviewed, because GitHub

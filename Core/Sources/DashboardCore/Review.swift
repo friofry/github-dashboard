@@ -11,6 +11,36 @@ public struct Finding: Codable, Identifiable, Sendable, Equatable {
         case high, medium, low
     }
 
+    /// How the problem comes about, as two to four short steps; the last one is the failure.
+    public struct Step: Codable, Sendable, Equatable {
+        public let title: String
+        public let detail: String
+    }
+
+    /// A concrete situation shown as "what each thing is now" against "what it is after the fix".
+    public struct Scenario: Codable, Sendable, Equatable {
+        public struct Row: Codable, Sendable, Equatable {
+            public let item: String
+            public let now: String
+            public let nowOk: Bool
+            public let after: String
+            public let afterOk: Bool
+        }
+
+        public let title: String
+        public let rows: [Row]
+    }
+
+    /// Claude's own estimate on three 1-3 scales. Rough by nature; the explanation carries more weight.
+    public struct Impact: Codable, Sendable, Equatable {
+        public let harm: Int
+        public let harmNote: String
+        public let likelihood: Int
+        public let likelihoodNote: String
+        public let effort: Int
+        public let effortNote: String
+    }
+
     public let category: Category
     public let severity: Severity
     public let title: String
@@ -20,8 +50,11 @@ public struct Finding: Codable, Identifiable, Sendable, Equatable {
     public let problem: String
     public let example: String?
     public let suggestion: String
-    /// Ready to post on GitHub.
-    public let comment: String
+    /// Ready to post on GitHub. The user may edit it before publishing.
+    public var comment: String
+    public let chain: [Step]?
+    public let scenario: Scenario?
+    public let impact: Impact?
     /// Set by the app: whether `path:line` is part of the diff, so GitHub can anchor a comment there.
     public var anchored: Bool?
     /// Set by the app once the user has published the comment: where it is on GitHub.
