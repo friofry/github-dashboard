@@ -103,6 +103,12 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertEqual(review.findings[0].impact?.harm, 3)
         XCTAssertEqual(review.findings[0].scenario?.rows.first?.nowOk, false)
         XCTAssertNil(review.findings[1].scenario, "the table is optional")
+        XCTAssertFalse(review.context?.why.isEmpty ?? true)
+    }
+
+    func testReviewSavedBeforeContextExistedStillDecodes() throws {
+        let json = #"{"summary":"Fine.","verdict":"approve","findings":[]}"#
+        XCTAssertNil(try JSONDecoder().decode(Review.self, from: Data(json.utf8)).context)
     }
 
     /// The schema the model answers to and the types the app decodes must name the same values.
@@ -117,6 +123,8 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertEqual(values("category", in: finding), Finding.Category.allCases.map(\.rawValue))
         XCTAssertEqual(values("severity", in: finding), Finding.Severity.allCases.map(\.rawValue))
         XCTAssertEqual(values("verdict", in: properties), ["approve", "comment", "request_changes"])
+        let context = (properties?["context"] as? [String: Any])?["required"] as? [String]
+        XCTAssertEqual(context, ["why", "architecture", "feature"])
     }
 
     func testLinkPointsAtTheLineInThePullRequest() throws {
@@ -157,6 +165,7 @@ final class ReviewFormTests: XCTestCase {
         XCTAssertTrue(input.contains(#""language":"Russian""#))
         XCTAssertTrue(input.contains(#""headSha":"sha-1""#))
         XCTAssertTrue(input.contains("cut short"))
+        XCTAssertTrue(input.contains("Reads hit the database"), "the description tells the model why")
     }
 
     func testWorkspacePathStaysUnderTheRoot() {

@@ -55,9 +55,11 @@ struct ClaudeReviewsView: View {
         .onChange(of: current.flatMap { coordinator.library.reviews[$0.id]?.pr?.reviewedAt }) { selectFirstFinding() }
     }
 
+    /// The context card when the review has one, else the first finding; a choice still on the list is kept.
     private func selectFirstFinding() {
-        let findings = current.flatMap { coordinator.library.reviews[$0.id]?.sortedFindings } ?? []
-        if !findings.contains(where: { $0.id == selectedFinding }) { selectedFinding = findings.first?.id }
+        let review = current.flatMap { coordinator.library.reviews[$0.id] }
+        let rows = (review?.context == nil ? [] : [FindingColumn.contextID]) + (review?.sortedFindings.map(\.id) ?? [])
+        if !rows.contains(where: { $0 == selectedFinding }) { selectedFinding = rows.first }
     }
 
     private var pullRequestColumn: some View {
@@ -155,6 +157,8 @@ struct ClaudeReviewsView: View {
         if let finding = review?.findings.first(where: { $0.id == selectedFinding }) {
             FindingDetail(coordinator: coordinator, pullRequest: pullRequest, finding: finding,
                           selection: $selectedFinding)
+        } else if let review, let context = review.context {
+            ContextCard(pullRequest: pullRequest, review: review, context: context)
         } else if let review, review.findings.isEmpty {
             ContentUnavailableView("No findings", systemImage: "checkmark.seal", description: Text(review.summary))
         } else {
@@ -170,11 +174,18 @@ struct FindingColumn: View {
     let pullRequest: PullRequest
     @Binding var selection: String?
 
+    /// Selection tag of the row that opens the context card; finding ids are `path:line:title`, so it cannot clash.
+    static let contextID = "pull-request-context"
+
     var body: some View {
         VStack(spacing: 0) {
             if let review = coordinator.library.reviews[pullRequest.id] {
                 List(selection: $selection) {
                     Section {
+                        if review.context != nil {
+                            Label("About this change", systemImage: "map")
+                                .tag(Self.contextID)
+                        }
                         ForEach(review.sortedFindings) { finding in
                             HStack(alignment: .top, spacing: 8) {
                                 Circle().fill(finding.severity.color).frame(width: 8, height: 8).padding(.top, 5)
@@ -232,6 +243,45 @@ struct FindingColumn: View {
                     .help("Hide until there is new activity in this pull request")
             }
         }
+    }
+}
+
+/// Right column when the context row is selected: why the change exists, where it sits, what it is part of.
+struct ContextCard: View {
+    let pullRequest: PullRequest
+    let review: Review
+    let context: Review.Context
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("\(pullRequest.repository.nameWithOwner) #\(pullRequest.number)")
+                        .font(.caption.monospaced()).foregroundStyle(.secondary)
+                    Text(pullRequest.title).font(.title3.weight(.semibold)).textSelection(.enabled)
+                }
+                part("Why", systemImage: "questionmark.bubble", text: context.why, tint: .blue)
+                part("Where it fits", systemImage: "square.stack.3d.up", text: context.architecture, tint: .purple)
+                part("The feature, simply", systemImage: "lightbulb", text: context.feature, tint: .orange)
+                if review.findings.isEmpty {
+                    Label("No findings", systemImage: "checkmark.seal").foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: 680, alignment: .leading)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .id(pullRequest.id)
+    }
+
+    private func part(_ title: String, systemImage: String, text: String, tint: Color) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Label(title, systemImage: systemImage).font(.headline).foregroundStyle(tint)
+            Text(text).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(12)
+        .background(tint.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 }
 

@@ -1,5 +1,10 @@
 {
   "summary": "Adds paging to the user list. The paging maths is right for full pages but crashes on an empty table.",
+  "context": {
+    "why": "The user list now has thousands of rows, so returning it in one response is slow. The description says the admin page times out.",
+    "architecture": "`api/users.go` is the HTTP handler layer: it reads the query string, calls the store in `db/users.go` and writes JSON. Paging is added in the handler and the store query.",
+    "feature": "The admin page shows everyone who has an account. With paging it asks for 50 people at a time and shows Next and Previous buttons."
+  },
   "verdict": "request_changes",
   "findings": [
     {

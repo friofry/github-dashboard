@@ -79,6 +79,8 @@ public struct PullRequest: Decodable, Identifiable, Sendable {
     public let deletions: Int
     public let repository: Repository
     public let author: Actor?
+    /// The description as plain text. Older saved data has none.
+    public let bodyText: String?
     let reviewDecision: String?
     let commits: Connection<CommitNode>
     let timelineItems: Connection<TimelineItem>

@@ -272,7 +272,7 @@ extension GitHubService {
     fileprivate static let pullRequestFragment = """
 
     fragment PR on PullRequest {
-      id number title url isDraft updatedAt headRefOid additions deletions reviewDecision
+      id number title url isDraft updatedAt headRefOid additions deletions reviewDecision bodyText
       repository { nameWithOwner }
       author { __typename login }
       commits(last: 1) { nodes { commit { statusCheckRollup { state } } } }

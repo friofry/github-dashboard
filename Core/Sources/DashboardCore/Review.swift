@@ -77,7 +77,18 @@ public struct Review: Codable, Sendable, Equatable {
         public var reviewedAt: Date?
     }
 
+    /// Background for a reviewer who does not know this part of the code. Absent in reviews made before it existed.
+    public struct Context: Codable, Sendable, Equatable {
+        /// Why the change is made.
+        public let why: String
+        /// Where the touched code sits in the project.
+        public let architecture: String
+        /// The feature the change goes into, explained very simply.
+        public let feature: String
+    }
+
     public let summary: String
+    public let context: Context?
     public let verdict: Verdict
     public var findings: [Finding]
     public var pr: Subject?
@@ -132,6 +143,8 @@ public struct ReviewSkill: Sendable {
 
 public enum ReviewInput {
     static let closingTag = "</pr-review-input>"
+    /// The description explains why; past this it is usually pasted logs or templates.
+    static let descriptionLimit = 4000
 
     /// The block the skill reads. The diff is other people's text, so it cannot be allowed to close the block early.
     public static func make(pullRequest: PullRequest, language: String, diff: AnnotatedDiff) -> String {
@@ -142,6 +155,9 @@ public enum ReviewInput {
             "author": pullRequest.author?.login ?? "",
             "headSha": pullRequest.headRefOid,
         ]
+        if let body = pullRequest.bodyText?.trimmingCharacters(in: .whitespacesAndNewlines), !body.isEmpty {
+            meta["description"] = body.count > descriptionLimit ? String(body.prefix(descriptionLimit)) + "…" : body
+        }
         if !language.isEmpty { meta["language"] = language }
         if diff.isTruncated { meta["note"] = "The diff was too large and is cut short." }
         let json = (try? JSONSerialization.data(withJSONObject: meta, options: [.sortedKeys]))

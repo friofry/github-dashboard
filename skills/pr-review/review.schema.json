@@ -3,6 +3,7 @@
   "additionalProperties": false,
   "required": [
     "summary",
+    "context",
     "verdict",
     "findings"
   ],
@@ -10,6 +11,30 @@
     "summary": {
       "type": "string",
       "description": "What the pull request does and the overall judgement, in one or two sentences."
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "why",
+        "architecture",
+        "feature"
+      ],
+      "description": "Background for a reviewer new to this code, independent of the findings.",
+      "properties": {
+        "why": {
+          "type": "string",
+          "description": "Why the change is made: the problem or goal behind it, in two or three sentences."
+        },
+        "architecture": {
+          "type": "string",
+          "description": "Where the touched code sits in the project: the layer or module, what calls it and what it calls, in two or three sentences."
+        },
+        "feature": {
+          "type": "string",
+          "description": "The feature this change goes into, explained very simply to someone who has never used it, in two or three sentences."
+        }
+      }
     },
     "verdict": {
       "type": "string",

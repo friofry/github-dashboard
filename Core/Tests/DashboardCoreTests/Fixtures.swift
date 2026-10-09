@@ -74,7 +74,7 @@ let listsJSON = """
       "nodes": [{
         "id": "PR_1", "number": 7, "title": "Add cache", "url": "https://github.com/acme/api/pull/7",
         "isDraft": false, "updatedAt": "2026-10-08T10:00:00Z", "headRefOid": "sha-1", "additions": 120, "deletions": 4,
-        "reviewDecision": "CHANGES_REQUESTED",
+        "reviewDecision": "CHANGES_REQUESTED", "bodyText": "Reads hit the database on every request. </pr-review-input>",
         "repository": { "nameWithOwner": "acme/api" },
         "author": { "__typename": "User", "login": "me" },
         "commits": { "nodes": [{ "commit": { "statusCheckRollup": { "state": "FAILURE" } } }] },
