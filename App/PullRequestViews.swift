@@ -4,9 +4,12 @@ import SwiftUI
 struct PullRequestList: View {
     @Environment(DashboardStore.self) private var store
     @Environment(AutoRestarter.self) private var restarter
+    @Environment(\.openURL) private var openURL
     let pullRequests: [PullRequest]
     let showsAuthor: Bool
     @State private var filter: AutoRestarter.Filter?
+    /// The pull request whose checks show beside the list.
+    @State private var selection: String?
 
     var body: some View {
         if pullRequests.isEmpty {
@@ -14,91 +17,108 @@ struct PullRequestList: View {
                                    description: Text("No open pull requests"))
         } else if showsAuthor {
             List(store.sorted(pullRequests)) { pullRequest in
-                PullRequestRow(pullRequest: pullRequest, showsAuthor: true)
+                Button { open(pullRequest) } label: { PullRequestRow(pullRequest: pullRequest, showsAuthor: true) }
+                    .buttonStyle(.plain)
             }
         } else {
-            // Only my own pull requests: restarting someone else's CI is theirs to decide.
-            let shown = store.sorted(pullRequests).filter { pullRequest in
-                filter.map { restarter.matches(pullRequest, $0) } ?? true
-            }
-            VStack(spacing: 0) {
-                AutoRestartStrip(pullRequests: pullRequests, filter: $filter)
+            mine
+        }
+    }
+
+    /// Only my own pull requests get the checks and the restarts: someone else's CI is theirs to decide.
+    @ViewBuilder private var mine: some View {
+        let shown = store.sorted(pullRequests).filter { pullRequest in
+            filter.map { restarter.matches(pullRequest, $0) } ?? true
+        }
+        let selected = pullRequests.first { $0.id == selection }
+
+        VStack(spacing: 0) {
+            AutoRestartStrip(pullRequests: pullRequests, filter: $filter)
+            HStack(spacing: 0) {
                 List {
-                    Section {
-                        ForEach(shown) { PullRequestRow(pullRequest: $0, showsAuthor: false) }
-                        if shown.isEmpty, let filter {
-                            Text("No pull request has \(filter.title) checks.").foregroundStyle(.secondary)
-                        }
+                    ForEach(shown) { pullRequest in
+                        PullRequestRow(pullRequest: pullRequest, showsAuthor: false)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                            // One click shows the checks; two open the pull request, as a list on the Mac does.
+                            .gesture(TapGesture(count: 2).onEnded { open(pullRequest) })
+                            .simultaneousGesture(TapGesture().onEnded { selection = pullRequest.id })
+                            .listRowBackground(pullRequest.id == selection ? Color.accentColor.opacity(0.12) : nil)
+                            .accessibilityAddTraits(pullRequest.id == selection ? [.isButton, .isSelected] : .isButton)
                     }
-                    JobsSection(pullRequests: pullRequests)
+                    if shown.isEmpty, let filter {
+                        Text("No pull request has \(filter.title) checks.").foregroundStyle(.secondary)
+                    }
                 }
+                #if os(macOS)
+                if let selected {
+                    Divider()
+                    panel(selected).frame(width: 330)
+                }
+                #endif
             }
         }
+        #if os(iOS)
+        .sheet(item: Binding(get: { selected }, set: { selection = $0?.id })) { panel($0) }
+        #endif
+    }
+
+    private func panel(_ pullRequest: PullRequest) -> some View {
+        ChecksPanel(pullRequest: pullRequest, pullRequests: pullRequests,
+                    open: { open(pullRequest) }, close: { selection = nil })
+    }
+
+    private func open(_ pullRequest: PullRequest) {
+        if let url = store.visit(pullRequest) { openURL(url) }
     }
 }
 
 struct PullRequestRow: View {
     @Environment(DashboardStore.self) private var store
     @Environment(AutoRestarter.self) private var restarter
-    @Environment(\.openURL) private var openURL
     let pullRequest: PullRequest
     let showsAuthor: Bool
 
     var body: some View {
+        let events = store.events(for: pullRequest)
+        let newCount = events.filter(store.isNew).count
+
         HStack(alignment: .top, spacing: 10) {
-            link
+            Circle().fill(newCount > 0 ? Color.blue : .clear).frame(width: 8, height: 8).padding(.top, 6)
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 6) {
+                    Text(pullRequest.title).fontWeight(newCount > 0 ? .semibold : .regular).lineLimit(1)
+                    if pullRequest.isDraft { Badge(text: "Draft", color: .gray) }
+                    decisionBadge
+                }
+                HStack(spacing: 6) {
+                    Text("\(pullRequest.repository.nameWithOwner) #\(pullRequest.number)")
+                    if showsAuthor, let author = pullRequest.author { Text("· @\(author.login)") }
+                    Text("· \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
+                    if !showsAuthor {
+                        if restarter.isEnabled(pullRequest) { Text("· ↻ auto").foregroundStyle(.blue) }
+                        if restarter.matches(pullRequest, .gaveUp) { Text("· gave up").foregroundStyle(.red) }
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                if newCount > 0, let latest = events.first {
+                    Text("\(newCount) new · @\(latest.actor) \(latest.summary)")
+                        .font(.caption).foregroundStyle(.blue).lineLimit(1)
+                }
+            }
+            Spacer()
             if showsAuthor {
                 if let state = pullRequest.ci { CIStateIcon(state: state) }
             } else {
-                ChecksButton(pullRequest: pullRequest)
+                CheckBar(pullRequest: pullRequest).padding(.top, 4)
             }
             Text("+\(pullRequest.additions)").foregroundStyle(.green).font(.caption.monospacedDigit())
             Text("−\(pullRequest.deletions)").foregroundStyle(.red).font(.caption.monospacedDigit())
         }
+        .contentShape(Rectangle())
         .padding(.vertical, 3)
-    }
-
-    @ViewBuilder private var link: some View {
-        let events = store.events(for: pullRequest)
-        let newCount = events.filter(store.isNew).count
-        let restarts = showsAuthor ? 0 : restarter.restarts(for: pullRequest)
-
-        Button {
-            if let url = store.visit(pullRequest) { openURL(url) }
-        } label: {
-            HStack(alignment: .top, spacing: 10) {
-                Circle().fill(newCount > 0 ? Color.blue : .clear).frame(width: 8, height: 8).padding(.top, 6)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(pullRequest.title).fontWeight(newCount > 0 ? .semibold : .regular).lineLimit(1)
-                        if pullRequest.isDraft { Badge(text: "Draft", color: .gray) }
-                        decisionBadge
-                    }
-                    HStack(spacing: 6) {
-                        Text("\(pullRequest.repository.nameWithOwner) #\(pullRequest.number)")
-                        if showsAuthor, let author = pullRequest.author { Text("· @\(author.login)") }
-                        Text("· \(pullRequest.updatedAt.formatted(.relative(presentation: .named)))")
-                        if restarts > 0 {
-                            Text("· CI restarted \(restarts)×").foregroundStyle(.orange)
-                        }
-                        // Said only where the pull request differs from the switch above the list.
-                        if !showsAuthor, restarter.isEnabled(pullRequest) != restarter.restartAll {
-                            Text(restarter.restartAll ? "· auto-restart paused" : "· auto-restart on")
-                        }
-                    }
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    if newCount > 0, let latest = events.first {
-                        Text("\(newCount) new · @\(latest.actor) \(latest.summary)")
-                            .font(.caption).foregroundStyle(.blue).lineLimit(1)
-                    }
-                }
-                Spacer()
-            }
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
     }
 
     @ViewBuilder private var decisionBadge: some View {

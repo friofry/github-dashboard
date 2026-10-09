@@ -93,10 +93,12 @@ Flaky CI does not have to mean pressing Restart by hand. In **Settings → Auto-
 address (e.g. `https://ci.example.com`), your Jenkins user and an API token (Jenkins → your name → Security → API
 Token; it is kept in the Keychain). Then switch on **Auto-restart failed jobs** above **My PRs**.
 
-The strip above the list also counts the pull requests with failed, running, restarted and given-up checks; press a
-count to see only those. A pull request's CI icon opens its checks, with a **Restart** button for each failed Jenkins
-job and a switch for that pull request alone. Under the list, **Jenkins jobs** shows every job seen on your pull
-requests, how many restarted runs then passed, and a switch per job, so a job that is really broken can be left alone.
+Every row of **My PRs** draws the head commit's checks as a bar: passed, restarting, running and failed. Click a
+pull request to open its checks beside the list: a **Restart** button for each failed Jenkins job, a switch for that
+pull request alone, and the history of what was restarted and how it ended. Double-click (or ⌘↩) opens the pull
+request on GitHub. **Which jobs restart…** in that panel lists every Jenkins job seen on your pull requests with how
+many restarted runs then passed and a switch per job, so a job that is really broken can be left alone. The counts
+above the list narrow it to the pull requests with failed, running, restarted or given-up checks.
 
 On each refresh the app looks at the head commit's checks. A check that failed and links to that Jenkins is started
 again through `buildWithParameters` (or `build` for a job without parameters):

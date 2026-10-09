@@ -251,6 +251,36 @@ final class AutoRestarterTests: XCTestCase {
 
         XCTAssertEqual(restarter.outcomes["jenkins/linux"], .init(passed: 1, failedAgain: 1))
         XCTAssertEqual(preferences.restartOutcomes["jenkins/linux"]?.total, 2)
+        XCTAssertEqual(restarter.history(for: passed).map(\.kind), [.passed, .requested, .failedAgain, .requested])
+        XCTAssertEqual(restarter.history(for: passed).map(\.count), [2, 2, 1, 1])
+        XCTAssertEqual(preferences.restartHistory.count, 4)
+    }
+
+    func testHistorySaysWhenAutoRestartGaveUpOrWasRefused() async throws {
+        let restarter = restarter()
+        restarter.restartAll = true
+        restarter.limit = 1
+        let failed = try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun3)])
+        await restarter.sync(mine: [failed])
+        XCTAssertNotNil(restarter.lines(for: failed).first?.asked)
+
+        let failedAgain = try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun4)])
+        await restarter.sync(mine: [failedAgain])
+        XCTAssertEqual(restarter.history(for: failed).map(\.kind), [.gaveUp, .requested])
+
+        jenkins.error = JenkinsError.forbidden
+        await restarter.restartNow(failedAgain, check: "jenkins/linux")
+        XCTAssertEqual(restarter.history(for: failed).first?.kind, .refused)
+        XCTAssertNotNil(restarter.history(for: failed).first?.detail)
+        XCTAssertTrue(restarter.history(for: try pullRequest(id: "PR_2", checks: [])).isEmpty)
+    }
+
+    func testAJobSwitchedOffIsMarkedOnItsLine() throws {
+        let restarter = restarter()
+        restarter.setCheckEnabled("jenkins/linux", false)
+        let line = try XCTUnwrap(restarter.lines(for: try pullRequest(checks: [("jenkins/linux", "FAILURE", linuxRun3)])).first)
+        XCTAssertTrue(line.autoOff)
+        XCTAssertTrue(line.canRestart, "by hand it still restarts")
     }
 
     func testLinesSayWhatHappenedToEachCheck() async throws {

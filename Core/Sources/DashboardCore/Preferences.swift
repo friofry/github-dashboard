@@ -148,6 +148,14 @@ public final class UserDefaultsPreferences: PreferencesStore, ReviewPreferences,
         set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "restartOutcomes") }
     }
 
+    public var restartHistory: [AutoRestartPolicy.Event] {
+        get {
+            guard let data = defaults.data(forKey: "restartHistory") else { return [] }
+            return (try? JSONDecoder().decode([AutoRestartPolicy.Event].self, from: data)) ?? []
+        }
+        set { defaults.set(try? JSONEncoder().encode(newValue), forKey: "restartHistory") }
+    }
+
     public var autoRestartLimit: Int {
         get { defaults.object(forKey: "autoRestartLimit") as? Int ?? 2 }
         set { defaults.set(newValue, forKey: "autoRestartLimit") }
@@ -182,6 +190,7 @@ public final class InMemoryPreferences: PreferencesStore, ReviewPreferences, Res
     public var autoRestartPausedPullRequests: [String] = []
     public var autoRestartOffChecks: [String] = []
     public var restartOutcomes: [String: AutoRestartPolicy.Outcome] = [:]
+    public var restartHistory: [AutoRestartPolicy.Event] = []
     public var autoRestartLimit = 2
     public var restartAttempts: [String: AutoRestartPolicy.Attempt] = [:]
 

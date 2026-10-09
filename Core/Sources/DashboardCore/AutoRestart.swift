@@ -10,12 +10,39 @@ public enum AutoRestartPolicy {
         public var lastBuild: URL
         /// True once the restarted run's result was counted; nil in data saved before results were counted.
         public var settled: Bool?
+        /// When Jenkins was last asked; nil in data saved before the time was kept.
+        public var date: Date?
 
-        public init(count: Int, lastBuild: URL, settled: Bool? = nil) {
+        public init(count: Int, lastBuild: URL, settled: Bool? = nil, date: Date? = nil) {
             self.count = count
             self.lastBuild = lastBuild
             self.settled = settled
+            self.date = date
         }
+    }
+
+    /// Something auto-restart did, or learned, about one check of one pull request.
+    public struct Event: Codable, Identifiable, Equatable, Sendable {
+        public enum Kind: String, Codable, Sendable {
+            /// Jenkins accepted the restart.
+            case requested
+            /// Jenkins did not accept it; `detail` says why.
+            case refused
+            case passed
+            case failedAgain
+            /// Failed again with no automatic restarts left.
+            case gaveUp
+        }
+
+        public var id = UUID()
+        public let date: Date
+        /// The pull request's id.
+        public let pullRequest: String
+        public let check: String
+        public let kind: Kind
+        /// Automatic restarts made on the commit by then.
+        public let count: Int
+        public var detail: String?
     }
 
     /// How restarts of one job ended, over every pull request.
@@ -108,6 +135,8 @@ public protocol RestartPreferences: AnyObject {
     var autoRestartOffChecks: [String] { get set }
     /// Keyed by check name.
     var restartOutcomes: [String: AutoRestartPolicy.Outcome] { get set }
+    /// Newest first.
+    var restartHistory: [AutoRestartPolicy.Event] { get set }
     var jenkinsServer: String { get set }
     var jenkinsUser: String { get set }
     var autoRestartLimit: Int { get set }
@@ -144,11 +173,16 @@ public final class AutoRestarter {
         public let restarts: Int
         /// A failed Jenkins build on the configured server that was not asked to start again yet.
         public let canRestart: Bool
+        /// When Jenkins was asked to start it again, while that restart is on its way.
+        public let asked: Date?
+        /// The job is switched off, so it is only ever restarted by hand.
+        public let autoOff: Bool
 
         public var id: String { check.name }
     }
 
     static let logSize = 20
+    static let historySize = 200
 
     public var restartAll: Bool { didSet { preferences.autoRestartAll = restartAll } }
     public var server: String { didSet { preferences.jenkinsServer = server } }
@@ -163,6 +197,7 @@ public final class AutoRestarter {
     /// How restarts of each job ended, by check name.
     public private(set) var outcomes: [String: AutoRestartPolicy.Outcome] { didSet { preferences.restartOutcomes = outcomes } }
 
+    private var history: [AutoRestartPolicy.Event] { didSet { preferences.restartHistory = history } }
     private var enabled: Set<String> { didSet { preferences.autoRestartPullRequests = enabled.sorted() } }
     private var paused: Set<String> { didSet { preferences.autoRestartPausedPullRequests = paused.sorted() } }
     private var offChecks: Set<String> { didSet { preferences.autoRestartOffChecks = offChecks.sorted() } }
@@ -184,6 +219,7 @@ public final class AutoRestarter {
         user = preferences.jenkinsUser
         limit = max(1, preferences.autoRestartLimit)
         outcomes = preferences.restartOutcomes
+        history = preferences.restartHistory
         enabled = Set(preferences.autoRestartPullRequests)
         paused = Set(preferences.autoRestartPausedPullRequests)
         offChecks = Set(preferences.autoRestartOffChecks)
@@ -229,7 +265,8 @@ public final class AutoRestarter {
             case nil: status = .unknown
             }
             return Line(check: check, status: status, restarts: attempt?.count ?? 0,
-                        canRestart: check.state == .failure && restartable && !asked)
+                        canRestart: check.state == .failure && restartable && !asked,
+                        asked: asked ? attempt?.date : nil, autoOff: restartable && offChecks.contains(check.name))
         }
         .sorted { (Self.rank($0.status), $0.check.name) < (Self.rank($1.status), $1.check.name) }
     }
@@ -242,6 +279,11 @@ public final class AutoRestarter {
         case .unknown: return 3
         case .passed: return 4
         }
+    }
+
+    /// What happened to the pull request's checks, newest first.
+    public func history(for pullRequest: PullRequest) -> [AutoRestartPolicy.Event] {
+        history.filter { $0.pullRequest == pullRequest.id }
     }
 
     public func matches(_ pullRequest: PullRequest, _ filter: Filter) -> Bool {
@@ -340,18 +382,21 @@ public final class AutoRestarter {
                          credentials: JenkinsCredentials, counted: Bool) async -> Bool {
         // Recorded before asking, so a Jenkins that keeps failing the request is not asked forever either.
         let count = (attempts[restart.key]?.count ?? 0) + (counted ? 1 : 0)
-        attempts[restart.key] = AutoRestartPolicy.Attempt(count: count, lastBuild: restart.failedRun, settled: false)
+        attempts[restart.key] = AutoRestartPolicy.Attempt(count: count, lastBuild: restart.failedRun, settled: false,
+                                                          date: now())
         let title = pullRequests.first { $0.id == restart.pullRequest }
             .map { "\($0.repository.nameWithOwner) #\($0.number)" } ?? restart.pullRequest
         do {
             try await client.restart(restart.build, credentials: credentials)
             record(Entry(date: now(), pullRequest: title, check: restart.check, error: nil))
+            note(.requested, restart.pullRequest, restart.check, count: count)
             lastError = nil
         } catch {
             // Nothing was started, so there will be no result to count.
             attempts[restart.key]?.settled = true
             let message = error.localizedDescription
             record(Entry(date: now(), pullRequest: title, check: restart.check, error: message))
+            note(.refused, restart.pullRequest, restart.check, count: count, detail: message)
             lastError = "Could not restart \(restart.check) on \(title): \(message)"
             // The same credentials will fail for every other job too.
             if let failure = error as? JenkinsError, failure == .unauthorized { return false }
@@ -368,8 +413,11 @@ public final class AutoRestarter {
                 var outcome = outcomes[check.name] ?? .init()
                 if check.state == .success {
                     outcome.passed += 1
+                    note(.passed, pullRequest.id, check.name, count: attempt.count)
                 } else if check.state == .failure, check.url != attempt.lastBuild {
                     outcome.failedAgain += 1
+                    let stopped = attempt.count >= limit || !isEnabled(pullRequest) || offChecks.contains(check.name)
+                    note(stopped ? .gaveUp : .failedAgain, pullRequest.id, check.name, count: attempt.count)
                 } else {
                     continue
                 }
@@ -404,6 +452,13 @@ public final class AutoRestarter {
 
     public func checkToken() async {
         hasToken = await tokenStore.token() != nil
+    }
+
+    private func note(_ kind: AutoRestartPolicy.Event.Kind, _ pullRequest: String, _ check: String, count: Int,
+                      detail: String? = nil) {
+        history.insert(.init(date: now(), pullRequest: pullRequest, check: check, kind: kind, count: count,
+                             detail: detail), at: 0)
+        if history.count > Self.historySize { history.removeLast(history.count - Self.historySize) }
     }
 
     private func record(_ entry: Entry) {

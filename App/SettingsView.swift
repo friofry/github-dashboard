@@ -135,8 +135,8 @@ struct AutoRestartSection: View {
             Text("Auto-restart failed CI")
         } footer: {
             Text("""
-            The same switch sits above My PRs; a pull request's CI icon there opens its checks and its own switch, \
-            and the list of Jenkins jobs below has one per job. Only failed checks that link to this Jenkins are \
+            The same switch sits above My PRs; click a pull request there to see its checks, restart one by hand, \
+            switch that pull request on or off, and choose which jobs restart. Only failed checks that link to this Jenkins are \
             restarted; a new commit starts the count again. Make the API token in Jenkins under your name → \
             Security (or Configure) → API Token.
             """)
