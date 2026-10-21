@@ -48,6 +48,8 @@ public final class ReviewCoordinator {
     public private(set) var usage: [UsageEntry]
     /// Automatic reviews that are waiting because today's spending reached the daily limit.
     public private(set) var heldByBudget: Set<String> = []
+    /// Why Claude cannot run at all, while its sign-in is gone; reviews wait for `retryAfterSignIn()`.
+    public private(set) var signInProblem: String?
 
     public var autoReview: Bool {
         didSet {
@@ -73,6 +75,8 @@ public final class ReviewCoordinator {
     private var queue: [PullRequest] = []
     private var worker: Task<Void, Never>?
     private var reviewRequests: [PullRequest] = []
+    /// Reviews stopped by the sign-in problem, to start again once Claude is signed in.
+    private var waitingForSignIn: [String: PullRequest] = [:]
 
     private let source: PullRequestDiffSource
     private let engine: ReviewEngine
@@ -135,6 +139,11 @@ public final class ReviewCoordinator {
     /// Reviews of listed pull requests whose last run failed.
     public var failedCount: Int { failures.count }
 
+    /// Whether this pull request's review stopped only because Claude is signed out.
+    public func isWaitingForSignIn(_ pullRequest: PullRequest) -> Bool {
+        waitingForSignIn[pullRequest.id] != nil && failures[pullRequest.id] != nil
+    }
+
     // MARK: Actions
 
     /// Call after every dashboard refresh: picks up results from disk and starts the automatic reviews.
@@ -144,6 +153,7 @@ public final class ReviewCoordinator {
         let everything = dashboard.mine + dashboard.reviews + reviewed
         let listed = Set(everything.map(\.id))
         failures = failures.filter { listed.contains($0.key) }
+        waitingForSignIn = waitingForSignIn.filter { listed.contains($0.key) }
         library.load(everything)
         // Requests an earlier launch queued but never got to.
         for pullRequest in everything where preferences.reviewQueue.contains(pullRequest.id) { request(pullRequest) }
@@ -156,6 +166,8 @@ public final class ReviewCoordinator {
                                                baseline: preferences.reviewBaseline, attempted: attempted,
                                                status: status(for:))
         if preferences.reviewBaseline != decision.baseline { preferences.reviewBaseline = decision.baseline }
+        // Every run would fail the same way; nothing counts as attempted, so these start once Claude is signed in.
+        guard signInProblem == nil else { return }
         // Past the daily limit nothing starts and nothing counts as attempted, so these run once the limit resets.
         guard spentToday < dailyAutoBudget else {
             heldByBudget = Set(decision.start)
@@ -172,6 +184,7 @@ public final class ReviewCoordinator {
     public func request(_ pullRequest: PullRequest) {
         guard working[pullRequest.id] == nil, !stillRunning.contains(pullRequest.id) else { return }
         failures[pullRequest.id] = nil
+        waitingForSignIn[pullRequest.id] = nil
         heldByBudget.remove(pullRequest.id)
         working[pullRequest.id] = .queued
         queue.append(pullRequest)
@@ -187,6 +200,15 @@ public final class ReviewCoordinator {
 
     public func requestAllPending() {
         pending.forEach(request)
+    }
+
+    /// Starts again every review the sign-in problem stopped. Cheap if Claude is still signed out:
+    /// the first run fails at once and the rest wait again.
+    public func retryAfterSignIn() {
+        let waiting = waitingForSignIn.values.filter { failures[$0.id] != nil }
+        signInProblem = nil
+        waitingForSignIn = [:]
+        waiting.sorted { $0.id < $1.id }.forEach(request)
     }
 
     /// Waits until the queue is empty. For tests and for callers that need the result.
@@ -240,6 +262,7 @@ public final class ReviewCoordinator {
                                                           sink: begin(current))
             try library.store(review, for: current, reviewedAt: now())
             end(current, spent, succeeded: true)
+            signInProblem = nil
 
             guard makeLessons else { return }
             current = RunRecord(kind: .lesson, pullRequest: pullRequest, startedAt: now())
@@ -249,6 +272,11 @@ public final class ReviewCoordinator {
                                                      options: options, sink: begin(current))
             end(current, lessonCost, succeeded: true)
             library.refreshLesson(for: pullRequest)
+        } catch ClaudeError.signedOut(let message) {
+            end(current, nil, succeeded: false)
+            // As with any failed lesson, a finished review stays.
+            let failsThis = current.kind == .review || library.reviews[pullRequest.id] == nil
+            stopForSignIn(failsThis ? [pullRequest] : [], ClaudeError.signedOut(message).localizedDescription)
         } catch {
             end(current, (error as? ClaudeError)?.usage, succeeded: false)
             // A failed lesson does not take the finished review away.
@@ -256,6 +284,18 @@ public final class ReviewCoordinator {
                 failures[pullRequest.id] = error.localizedDescription
             }
         }
+    }
+
+    /// Fails the stopped review and holds the rest of the queue: each would fail the same way until the user signs in.
+    private func stopForSignIn(_ stopped: [PullRequest], _ message: String) {
+        signInProblem = message
+        for held in stopped + queue {
+            working[held.id] = nil
+            failures[held.id] = message
+            waitingForSignIn[held.id] = held
+            preferences.reviewQueue.removeAll { $0 == held.id }
+        }
+        queue.removeAll()
     }
 
     private func begin(_ record: RunRecord) -> RunSink {
