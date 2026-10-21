@@ -333,6 +333,18 @@ final class ClaudeResultTests: XCTestCase {
         }
     }
 
+    func testExpiredSignInIsToldApartFromOtherFailures() throws {
+        let expired = output.replacingOccurrences(of: #""is_error":false"#, with: #""is_error":true"#)
+            .replacingOccurrences(of: #""structured_output":{"summary":"Fine.","verdict":"approve","findings":[]},"#, with: "")
+            .replacingOccurrences(of: "ignored when structured output is present",
+                                  with: "Failed to authenticate: OAuth session expired and could not be refreshed")
+        XCTAssertThrowsError(try ClaudeResult(data: Data(expired.utf8)).review()) { error in
+            guard case .signedOut = error as? ClaudeError else { return XCTFail("\(error)") }
+            XCTAssertTrue(error.localizedDescription.contains("claude auth login"))
+        }
+        guard case .failed = ClaudeError.from("Budget exceeded", usage: nil) else { return XCTFail() }
+    }
+
     func testAnswerOutsideTheFormIsRejected() throws {
         let wrong = output.replacingOccurrences(of: #""verdict":"approve""#, with: #""verdict":"ship it""#)
         XCTAssertThrowsError(try ClaudeResult(data: Data(wrong.utf8)).review())
@@ -763,6 +775,38 @@ final class ReviewCoordinatorTests: XCTestCase {
         let fresh = makeCoordinator()
         fresh.sync(with: dashboard, reviewed: reviewed)
         XCTAssertEqual(fresh.status(for: reviewed[0]), .current)
+    }
+
+    func testSignedOutStopsTheQueueUntilRetriedAfterSignIn() async throws {
+        engine.failure = .signedOut("OAuth session expired")
+        let dashboard = try decodeDashboard()
+        let coordinator = makeCoordinator()
+        let first = dashboard.mine[0], second = dashboard.reviews[0]
+
+        coordinator.request(first)
+        coordinator.request(second)
+        await coordinator.waitUntilIdle()
+
+        // The second run never starts: it would fail the same way.
+        XCTAssertEqual(engine.inputs.count, 1)
+        XCTAssertNotNil(coordinator.signInProblem)
+        XCTAssertTrue(coordinator.isWaitingForSignIn(first) && coordinator.isWaitingForSignIn(second))
+        XCTAssertEqual(preferences.reviewQueue, [])
+
+        // Automatic reviews wait too, without counting as attempted.
+        coordinator.autoReview = true
+        preferences.reviewBaseline = []
+        coordinator.sync(with: dashboard)
+        await coordinator.waitUntilIdle()
+        XCTAssertEqual(engine.inputs.count, 1)
+
+        engine.failure = nil
+        coordinator.retryAfterSignIn()
+        await coordinator.waitUntilIdle()
+        XCTAssertNil(coordinator.signInProblem)
+        XCTAssertEqual(coordinator.status(for: first), .current)
+        XCTAssertEqual(coordinator.status(for: second), .current)
+        XCTAssertEqual(coordinator.failedCount, 0)
     }
 
     func testFailedReviewIsShownCountedAndNotRetriedAutomatically() async throws {
