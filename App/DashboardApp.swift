@@ -74,6 +74,8 @@ final class AppModel {
         let keychain = KeychainTokenStore(service: config.bundleIdentifier)
         var providers: [TokenProvider] = [keychain, StaticTokenProvider(config.environmentToken)]
         #if os(macOS)
+        // gh's keychain item first: `gh auth token` stalls on a keychain prompt when a GUI app starts it.
+        providers.append(GitHubCLIKeychainTokenProvider(environment: config.environment))
         providers.append(GitHubCLITokenProvider())
         #endif
         let service = GitHubService(tokens: TokenChain(providers))

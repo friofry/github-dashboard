@@ -174,6 +174,7 @@ struct FindingColumn: View {
     let coordinator: ReviewCoordinator
     let pullRequest: PullRequest
     @Binding var selection: String?
+    @State private var confirmsPublishAll = false
 
     /// Selection tag of the row that opens the context card; finding ids are `path:line:title`, so it cannot clash.
     static let contextID = "pull-request-context"
@@ -222,7 +223,36 @@ struct FindingColumn: View {
                 .frame(maxHeight: .infinity)
             }
             Divider()
-            actions.controlSize(.small).padding(8)
+            VStack(spacing: 6) {
+                publishAll
+                actions
+            }
+            .controlSize(.small).padding(8)
+        }
+    }
+
+    /// One click for every medium and high finding that is not on GitHub yet; absent when there is none.
+    @ViewBuilder private var publishAll: some View {
+        let publishing = coordinator.publishing
+        let waiting = publishing.unpublished(in: pullRequest)
+        if !waiting.isEmpty {
+            let isPosting = waiting.contains { publishing.inFlight.contains(CommentPublishing.key($0, in: pullRequest)) }
+            Button { confirmsPublishAll = true } label: {
+                Label("Publish \(waiting.count) medium+", systemImage: "paperplane").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isPosting)
+            .help("Post the comments of all unpublished medium and high findings as one review")
+            // Posting is public and cannot be taken back from here, so it always asks first.
+            .confirmationDialog(waiting.count == 1 ? "Publish 1 comment?" : "Publish \(waiting.count) comments?",
+                                isPresented: $confirmsPublishAll) {
+                Button("Publish to \(pullRequest.repository.nameWithOwner) #\(pullRequest.number)") {
+                    Task { await publishing.publishAll(in: pullRequest) }
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Every medium and high finding without a comment on GitHub will be posted under your GitHub account, with the text as saved.")
+            }
         }
     }
 

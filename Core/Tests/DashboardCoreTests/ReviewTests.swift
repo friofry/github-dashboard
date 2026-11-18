@@ -257,6 +257,34 @@ final class CommentPublishingTests: XCTestCase {
         XCTAssertEqual(transport.requests[0].url?.path, "/repos/acme/api/issues/7/comments")
     }
 
+    func testSeveralFindingsGoAsOneSubmittedReview() async throws {
+        transport.listsBody = #"{"html_url":"https://github.com/acme/api/pull/7#pullrequestreview-5"}"#
+
+        let url = try await service.publishReview([try finding(anchored: true), try finding(anchored: true, endLine: 19)],
+                                                  repo: "acme/api", number: 7, commitSha: "abc")
+
+        XCTAssertEqual(url.absoluteString, "https://github.com/acme/api/pull/7#pullrequestreview-5")
+        XCTAssertEqual(transport.requests.count, 1)
+        XCTAssertEqual(transport.requests[0].httpMethod, "POST")
+        XCTAssertEqual(transport.requests[0].url?.absoluteString, "https://api.github.com/repos/acme/api/pulls/7/reviews")
+        XCTAssertEqual(body(0)["event"] as? String, "COMMENT")
+        XCTAssertEqual(body(0)["commit_id"] as? String, "abc")
+        let comments = try XCTUnwrap(body(0)["comments"] as? [[String: Any]])
+        XCTAssertEqual(comments.map { $0["line"] as? Int }, [17, 19])
+        XCTAssertEqual(comments.map { $0["start_line"] as? Int }, [nil, 17])
+        XCTAssertEqual(comments[0]["body"] as? String, "Please fix.")
+        XCTAssertEqual(comments[0]["path"] as? String, "api/users.go")
+
+        // A comment GitHub cannot attach refuses the whole review, which the caller answers by posting one by one.
+        transport.statuses = [422]
+        do {
+            _ = try await service.publishReview([try finding(anchored: true)], repo: "acme/api", number: 7, commitSha: "abc")
+            XCTFail("expected a refusal")
+        } catch {
+            XCTAssertEqual(error as? DashboardError, .http(422))
+        }
+    }
+
     func testReadOnlyTokenAndForeignLinkAreRefused() async throws {
         transport.statuses = [403]
         do {
@@ -437,12 +465,120 @@ private final class FakeEngine: ReviewEngine, @unchecked Sendable {
 
 private final class FakePublisher: CommentPublisher, @unchecked Sendable {
     var failure: Error?
+    var reviewFailure: Error?
+    /// Titles of findings whose own comment is refused.
+    var failingTitles: Set<String> = []
     private(set) var calls: [(path: String, commit: String)] = []
+    private(set) var singles: [Finding] = []
+    private(set) var reviews: [[Finding]] = []
 
     func publish(_ finding: Finding, repo: String, number: Int, commitSha: String) async throws -> URL {
         calls.append((finding.path, commitSha))
+        singles.append(finding)
         if let failure { throw failure }
+        if failingTitles.contains(finding.title) { throw DashboardError.cannotWrite }
         return URL(string: "https://github.com/\(repo)/pull/\(number)#discussion_r1")!
+    }
+
+    func publishReview(_ findings: [Finding], repo: String, number: Int, commitSha: String) async throws -> URL {
+        reviews.append(findings)
+        if let reviewFailure { throw reviewFailure }
+        return URL(string: "https://github.com/\(repo)/pull/\(number)#pullrequestreview-1")!
+    }
+}
+
+@MainActor
+final class PublishAllTests: XCTestCase {
+    private let publisher = FakePublisher()
+    private let root = FileManager.default.temporaryDirectory.appendingPathComponent("publish-all-\(UUID().uuidString)")
+    private lazy var library = ReviewLibrary(workspace: ReviewWorkspace(root: root))
+    private lazy var publishing = CommentPublishing(publisher: publisher, library: library)
+    private var pullRequest: PullRequest!
+
+    /// High and medium on lines of the diff, one low, one medium already on GitHub, one medium outside the diff.
+    override func setUp() async throws {
+        func finding(_ title: String, _ severity: String, _ extra: String = #""anchored":true"#) -> String {
+            #"{"category":"smell","severity":"\#(severity)","title":"\#(title)","path":"api/users.go","line":17,"#
+                + #""problem":"p","suggestion":"s","comment":"Fix \#(title).",\#(extra)}"#
+        }
+        let json = #"{"summary":"s","verdict":"comment","pr":{"repo":"acme/api","number":7,"headSha":"sha-1"},"findings":["#
+            + [finding("medium", "medium"), finding("low", "low"), finding("high", "high"),
+               finding("posted", "medium", #""anchored":true,"postedURL":"https://github.com/acme/api/pull/7#discussion_r0""#),
+               finding("outside", "medium", #""anchored":false"#)].joined(separator: ",") + "]}"
+        pullRequest = try decodeDashboard().mine[0]
+        try ReviewWorkspace(root: root).save(try JSONDecoder().decode(Review.self, from: Data(json.utf8)),
+                                             repo: "acme/api", number: 7)
+        library.load([pullRequest])
+    }
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: root)
+    }
+
+    private func posted(_ title: String) -> String? {
+        library.reviews[pullRequest.id]?.findings.first { $0.title == title }?.postedURL?.absoluteString
+    }
+
+    private func error(_ title: String) -> String? {
+        library.reviews[pullRequest.id]?.findings.first { $0.title == title }
+            .flatMap { publishing.errors[CommentPublishing.key($0, in: pullRequest)] }
+    }
+
+    func testOnlyUnpublishedMediumAndHighAreSentWithTheEditedText() async throws {
+        XCTAssertEqual(publishing.unpublished(in: pullRequest).map(\.title), ["high", "medium", "outside"])
+        let high = try XCTUnwrap(publishing.unpublished(in: pullRequest).first)
+        publishing.setComment("Edited.", for: high, in: pullRequest)
+
+        await publishing.publishAll(in: pullRequest)
+
+        XCTAssertEqual(publisher.reviews.map { $0.map(\.comment) }, [["Edited.", "Fix medium."]], "one review for the lines of the diff")
+        XCTAssertEqual(publisher.singles.map(\.title), ["outside"], "a line outside the diff still becomes a plain comment")
+        XCTAssertEqual(publisher.calls.last?.commit, "sha-1")
+        XCTAssertEqual(posted("high"), "https://github.com/acme/api/pull/7#pullrequestreview-1")
+        XCTAssertEqual(posted("medium"), "https://github.com/acme/api/pull/7#pullrequestreview-1")
+        XCTAssertEqual(posted("outside"), "https://github.com/acme/api/pull/7#discussion_r1")
+        XCTAssertNil(posted("low"))
+        XCTAssertEqual(posted("posted"), "https://github.com/acme/api/pull/7#discussion_r0")
+        XCTAssertTrue(publishing.errors.isEmpty)
+        XCTAssertTrue(publishing.inFlight.isEmpty)
+
+        await publishing.publishAll(in: pullRequest)
+        XCTAssertEqual(publisher.reviews.count, 1, "nothing is left to post")
+        XCTAssertEqual(publisher.singles.count, 1)
+    }
+
+    func testRefusedReviewGoesOneByOneAndOneFailureDoesNotStopTheRest() async throws {
+        publisher.reviewFailure = DashboardError.http(422)
+        publisher.failingTitles = ["high"]
+
+        await publishing.publishAll(in: pullRequest)
+
+        XCTAssertEqual(publisher.singles.map(\.title), ["high", "medium", "outside"])
+        XCTAssertNil(posted("high"))
+        XCTAssertNotNil(error("high"))
+        XCTAssertNotNil(posted("medium"))
+        XCTAssertNotNil(posted("outside"))
+        XCTAssertNil(error("medium"))
+
+        // The next click retries only what failed; a single finding needs no review.
+        publisher.failingTitles = []
+        await publishing.publishAll(in: pullRequest)
+        XCTAssertEqual(publisher.reviews.count, 1)
+        XCTAssertEqual(publisher.singles.map(\.title).last, "high")
+        XCTAssertNotNil(posted("high"))
+        XCTAssertTrue(publishing.errors.isEmpty)
+    }
+
+    func testReviewThatMayHaveBeenCreatedIsNotPostedAgainOneByOne() async throws {
+        publisher.reviewFailure = URLError(.timedOut)
+
+        await publishing.publishAll(in: pullRequest)
+
+        XCTAssertEqual(publisher.singles.map(\.title), ["outside"])
+        XCTAssertNotNil(error("high"))
+        XCTAssertNotNil(error("medium"))
+        XCTAssertNil(posted("high"))
+        XCTAssertNotNil(posted("outside"))
     }
 }
 

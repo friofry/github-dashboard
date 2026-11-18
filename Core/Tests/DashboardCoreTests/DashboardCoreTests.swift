@@ -130,6 +130,77 @@ final class TokenChainTests: XCTestCase {
     }
 }
 
+final class GitHubCLIKeychainTokenProviderTests: XCTestCase {
+    private let hosts = """
+    github.com:
+        users:
+            friofry:
+            other:
+        user: friofry
+        git_protocol: https
+    ghe.example.com:
+        user: someone
+    """
+
+    private func provider(hosts: String?, secret: @escaping GitHubCLIKeychainTokenProvider.SecretReader) throws
+        -> GitHubCLIKeychainTokenProvider {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: dir) }
+        if let hosts { try hosts.write(to: dir.appendingPathComponent("hosts.yml"), atomically: true, encoding: .utf8) }
+        return GitHubCLIKeychainTokenProvider(configDirectory: dir, readSecret: secret)
+    }
+
+    func testReadsActiveUsersItemAndDecodesIt() async throws {
+        let encoded = "go-keyring-base64:" + Data("gho_abc\n".utf8).base64EncodedString()
+        let asked = LockedBox<(String, String?)?>(nil)
+        let token = try await provider(hosts: hosts) { service, account in
+            asked.value = (service, account)
+            return encoded
+        }.token()
+        XCTAssertEqual(token?.value, "gho_abc")
+        XCTAssertEqual(token?.source, .ghCLI)
+        XCTAssertEqual(asked.value?.0, "gh:github.com")
+        XCTAssertEqual(asked.value?.1, "friofry")
+    }
+
+    func testWithoutHostsFileAsksForAnyAccount() async throws {
+        let asked = LockedBox<String??>(nil)
+        let token = try await provider(hosts: nil) { _, account in
+            asked.value = .some(account)
+            return "plain"
+        }.token()
+        XCTAssertEqual(token?.value, "plain")
+        XCTAssertEqual(asked.value, .some(nil))
+    }
+
+    func testMissingOrRefusedItemGivesNoToken() async throws {
+        let token = try await provider(hosts: hosts) { _, _ in nil }.token()
+        XCTAssertNil(token)
+    }
+
+    func testActiveUserIsPerHost() {
+        XCTAssertEqual(GitHubCLIKeychainTokenProvider.activeUser(inHosts: hosts, host: "ghe.example.com"), "someone")
+        XCTAssertNil(GitHubCLIKeychainTokenProvider.activeUser(inHosts: hosts, host: "nowhere.com"))
+    }
+
+    func testDecodesHexAndRejectsBrokenEncoding() {
+        XCTAssertEqual(GitHubCLIKeychainTokenProvider.decode("go-keyring-encoded:676f685f78"), "goh_x")
+        XCTAssertNil(GitHubCLIKeychainTokenProvider.decode("go-keyring-encoded:zz"))
+        XCTAssertNil(GitHubCLIKeychainTokenProvider.decode("go-keyring-base64:!!"))
+    }
+}
+
+private final class LockedBox<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: Value
+    init(_ value: Value) { stored = value }
+    var value: Value {
+        get { lock.withLock { stored } }
+        set { lock.withLock { stored = newValue } }
+    }
+}
+
 @MainActor
 final class DashboardStoreTests: XCTestCase {
     private let transport = FakeTransport()
