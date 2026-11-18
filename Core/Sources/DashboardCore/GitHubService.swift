@@ -154,31 +154,67 @@ public struct GitHubService: DashboardService, PullRequestDiffSource, CommentPub
 
         var lastStatus = 0
         for (address, body) in attempts {
-            guard let url = URL(string: address) else { continue }
-            var request = URLRequest(url: url, timeoutInterval: 30)
-            request.httpMethod = "POST"
-            request.setValue("bearer \(token.value)", forHTTPHeaderField: "Authorization")
-            request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-            let (data, response) = try await transport.send(request)
-            lastStatus = (response as? HTTPURLResponse)?.statusCode ?? 0
-            switch lastStatus {
-            case 201:
-                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                guard let link = (object?["html_url"] as? String).flatMap(URL.init(string:)),
-                      link.scheme == "https", link.host == "github.com"
-                else { throw DashboardError.graphQL("the comment was created but GitHub returned no link") }
-                return link
+            let (data, status) = try await write(body, to: address, token: token)
+            lastStatus = status
+            switch status {
+            case 201: return try Self.link(in: data)
             case 422:
                 // GitHub cannot attach a comment to that line; try the next, less specific place.
                 continue
-            case 401: throw DashboardError.unauthorized
-            case 403, 404: throw DashboardError.cannotWrite
-            default: throw DashboardError.http(lastStatus)
+            default: throw Self.writeError(status)
             }
         }
         throw DashboardError.http(lastStatus)
+    }
+
+    public func publishReview(_ findings: [Finding], repo: String, number: Int, commitSha: String) async throws -> URL {
+        let token = try await requireToken()
+        guard let path = repo.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) else {
+            throw DashboardError.http(400)
+        }
+        let comments = findings.map { finding -> [String: Any] in
+            var comment: [String: Any] = ["body": finding.comment, "path": finding.path, "side": "RIGHT",
+                                          "line": finding.line]
+            if let end = finding.endLine, end > finding.line {
+                comment.merge(["start_line": finding.line, "start_side": "RIGHT", "line": end]) { $1 }
+            }
+            return comment
+        }
+        // COMMENT submits the review at once; without an event it would stay a draft only the user sees.
+        let body: [String: Any] = ["commit_id": commitSha, "event": "COMMENT", "comments": comments]
+        let (data, status) = try await write(body, to: "https://api.github.com/repos/\(path)/pulls/\(number)/reviews",
+                                             token: token)
+        // 422 comes out as `.http(422)`: a comment could not be attached, so no review was created.
+        guard status == 200 || status == 201 else { throw Self.writeError(status) }
+        return try Self.link(in: data)
+    }
+
+    private func write(_ body: [String: Any], to address: String, token: Token) async throws -> (Data, Int) {
+        guard let url = URL(string: address) else { throw DashboardError.http(400) }
+        var request = URLRequest(url: url, timeoutInterval: 30)
+        request.httpMethod = "POST"
+        request.setValue("bearer \(token.value)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await transport.send(request)
+        return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+    }
+
+    private static func writeError(_ status: Int) -> DashboardError {
+        switch status {
+        case 401: return .unauthorized
+        case 403, 404: return .cannotWrite
+        default: return .http(status)
+        }
+    }
+
+    /// Where the new comment or review is. Taken from GitHub's answer, so it is only accepted for github.com.
+    private static func link(in data: Data) throws -> URL {
+        let object = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        guard let link = (object?["html_url"] as? String).flatMap(URL.init(string:)),
+              link.scheme == "https", link.host == "github.com"
+        else { throw DashboardError.graphQL("the comment was created but GitHub returned no link") }
+        return link
     }
 
     private func requireToken() async throws -> Token {
