@@ -151,7 +151,7 @@ public struct GitHubCLIKeychainTokenProvider: TokenProvider {
             return URL(fileURLWithPath: xdg).appendingPathComponent("gh")
         }
         let home = environment["HOME"].map { URL(fileURLWithPath: $0) }
-            ?? FileManager.default.homeDirectoryForCurrentUser
+            ?? URL(fileURLWithPath: NSHomeDirectory())
         return home.appendingPathComponent(".config/gh")
     }
 
