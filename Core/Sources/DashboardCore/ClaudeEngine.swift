@@ -4,12 +4,24 @@ public enum ClaudeError: LocalizedError {
     case notInstalled
     /// The run ended without a usable answer. Usage is kept because a failed run still costs tokens.
     case failed(String, ClaudeUsage?)
+    /// Claude Code's sign-in is gone or expired; nothing will run until the user signs in again.
+    case signedOut(String)
 
     public var errorDescription: String? {
         switch self {
         case .notInstalled: return "Claude Code is not installed. Install it and run `claude` once to sign in."
         case .failed(let message, _): return message
+        case .signedOut(let message):
+            return "Claude Code is signed out (\(message)). Sign in again with `claude auth login`; reviews resume after that."
         }
+    }
+
+    /// The failure Claude's own message describes: a sign-in problem, or anything else.
+    public static func from(_ message: String, usage: ClaudeUsage?) -> ClaudeError {
+        let text = message.lowercased()
+        let signIn = ["failed to authenticate", "oauth", "/login", "not logged in", "invalid api key",
+                      "authentication_error", "token has expired"]
+        return signIn.contains(where: text.contains) ? .signedOut(message) : .failed(message, usage)
     }
 
     public var usage: ClaudeUsage? {
@@ -69,7 +81,7 @@ public struct ClaudeResult: Sendable {
     }
 
     public func review() throws -> Review {
-        guard !isError else { throw ClaudeError.failed(text.isEmpty ? "Claude reported an error." : text, usage) }
+        guard !isError else { throw ClaudeError.from(text.isEmpty ? "Claude reported an error." : text, usage: usage) }
         guard let data = structuredOutput ?? text.data(using: .utf8),
               let review = try? JSONDecoder().decode(Review.self, from: data)
         else { throw ClaudeError.failed("Claude's answer did not match the review form.", usage) }
@@ -117,7 +129,7 @@ public struct ClaudeCLI: ReviewEngine {
                          "--tools", "Read,Write,Edit,Glob,Grep", "--permission-mode", "acceptEdits"]
         let result = try await run(arguments, options: options, in: directory, input: "", timeout: 1200, sink: sink)
         guard !result.isError else {
-            throw ClaudeError.failed(result.text.isEmpty ? "Claude could not build the lesson." : result.text, result.usage)
+            throw ClaudeError.from(result.text.isEmpty ? "Claude could not build the lesson." : result.text, usage: result.usage)
         }
         return result.usage
     }

@@ -148,7 +148,7 @@ struct ClaudeReviewsView: View {
         case .working(.teaching): return "writing lesson…"
         case .current: return counts ?? ""
         case .outdated: return "\(counts ?? "") · new commits"
-        case .failed: return "failed"
+        case .failed: return coordinator.isWaitingForSignIn(pullRequest) ? "waiting for Claude sign-in" : "failed"
         }
     }
 
@@ -211,6 +211,13 @@ struct FindingColumn: View {
                     Label("Not reviewed yet", systemImage: "sparkles")
                 } description: {
                     if case .failed(let message) = coordinator.status(for: pullRequest) { Text(message) }
+                } actions: {
+                    #if os(macOS)
+                    if coordinator.isWaitingForSignIn(pullRequest) {
+                        Button("Sign in to Claude…") { ClaudeSignIn.open() }
+                            .help("Opens Terminal with `claude auth login`; reviews start again when you come back")
+                    }
+                    #endif
                 }
                 .frame(maxHeight: .infinity)
             }
@@ -229,7 +236,12 @@ struct FindingColumn: View {
             case .none: Button("Review") { coordinator.request(pullRequest) }
             case .current: Button("Re-review") { coordinator.request(pullRequest) }
             case .outdated: Button("Re-review new commits") { coordinator.request(pullRequest) }
-            case .failed: Button("Retry") { coordinator.request(pullRequest) }
+            case .failed:
+                if coordinator.isWaitingForSignIn(pullRequest) {
+                    Button("Retry") { coordinator.retryAfterSignIn() }.help("Retry every review that stopped at sign-in")
+                } else {
+                    Button("Retry") { coordinator.request(pullRequest) }
+                }
             }
             Spacer()
             if let lesson = coordinator.library.lessons[pullRequest.id] {

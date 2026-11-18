@@ -63,6 +63,9 @@ final class AppModel {
     let reviews: ReviewCoordinator?
     let restarter: AutoRestarter
     let notifier: Notifier
+    #if os(macOS)
+    private var activation: NSObjectProtocol?
+    #endif
 
     init() {
         let config = AppConfig()
@@ -89,6 +92,15 @@ final class AppModel {
         }
         store.startAutoRefresh()
         notifier.start { [store] in store.dashboard?.viewer }
+        #if os(macOS)
+        // Coming back to the app is usually coming back from signing in to Claude in Terminal.
+        activation = NotificationCenter.default.addObserver(forName: NSApplication.didBecomeActiveNotification,
+                                                            object: nil, queue: .main) { [reviews] _ in
+            MainActor.assumeIsolated {
+                if reviews?.signInProblem != nil { reviews?.retryAfterSignIn() }
+            }
+        }
+        #endif
     }
 
     private static func makeReviews(service: GitHubService, preferences: UserDefaultsPreferences,
@@ -179,6 +191,9 @@ extension ReviewCoordinator {
     /// Problems with Claude reviews worth seeing from the menu bar.
     var alerts: [String] {
         var alerts: [String] = []
+        if signInProblem != nil {
+            alerts.append("Claude Code is signed out: run `claude auth login`, reviews wait until then")
+        }
         if failedCount > 0 {
             alerts.append(failedCount == 1 ? "1 Claude review failed" : "\(failedCount) Claude reviews failed")
         }
@@ -187,6 +202,27 @@ extension ReviewCoordinator {
             alerts.append("Daily Claude limit reached: \(count) automatic review\(count == 1 ? "" : "s") waiting")
         }
         return alerts
+    }
+}
+
+/// Opens Terminal on `claude auth login`, the CLI's own sign-in; the app never sees the credentials.
+enum ClaudeSignIn {
+    static func open() {
+        let claude = ClaudeCLI.executable ?? "claude"
+        let script = FileManager.default.temporaryDirectory.appendingPathComponent("claude-sign-in.command")
+        let text = """
+        #!/bin/sh
+        '\(claude.replacingOccurrences(of: "'", with: "'\\''"))' auth login
+        echo
+        echo "Return to GitHub Dashboard: the stopped reviews start again on their own."
+        """
+        do {
+            try Data(text.utf8).write(to: script)
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+            NSWorkspace.shared.open(script)
+        } catch {
+            NSLog("Could not open Claude sign-in: \(error)")
+        }
     }
 }
 #endif
